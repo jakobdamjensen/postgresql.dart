@@ -34,18 +34,18 @@ class _MessageReader {
   void appendFromSocket(Socket _socket) {
     _buffer.appendFromSocket(_socket, _readSize);
     
-    //Debugging
-    int i = _buffer.block.start;
-    while (i < _buffer.block.end - 5) {
-      int mtype = _buffer.block.list[i];
-      int a = _buffer.block.list[i + 1];
-      int b = _buffer.block.list[i + 2];
-      int c = _buffer.block.list[i + 3];
-      int d = _buffer.block.list[i + 4];
-      int len = (a << (8*3)) + (b << (8*2)) + (c << 8) + d;
-      _log('Message: ${_itoa(mtype)} ${_messageName(mtype)} length: $len.');
-      i += len;
-    }
+// Print debugging info
+//    int i = _buffer.block.start;
+//    while (i < _buffer.block.end - 5) {
+//      int mtype = _buffer.block.list[i];
+//      int a = _buffer.block.list[i + 1];
+//      int b = _buffer.block.list[i + 2];
+//      int c = _buffer.block.list[i + 3];
+//      int d = _buffer.block.list[i + 4];
+//      int len = (a << (8*3)) + (b << (8*2)) + (c << 8) + d;
+//      _log('Message: ${_itoa(mtype)} ${_messageName(mtype)} length: $len.');
+//      i += len;
+//    }
   }
   
   int peekByteFast() {

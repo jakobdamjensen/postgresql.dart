@@ -26,7 +26,8 @@ class _CircularBlockBuffer {
   _Block get _head => _blocks[_headIndex];
   _Block get _tail => _blocks[_tailIndex];
   
-  void _log(String msg) => print('_CircularBlockBuffer: $msg');
+  //void _log(String msg) => print('_CircularBlockBuffer: $msg');
+  void _log(String msg) {}
   
   void _logState() {
     _log('index: $index, head: $_headIndex, tail: $_tailIndex, current: $_currentIndex, blocks: ${_blocks.length}');

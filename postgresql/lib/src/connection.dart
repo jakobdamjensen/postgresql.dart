@@ -1,24 +1,7 @@
 
 Future<Connection> _connect([Settings settings = null]) {
   var c = new _Connection(settings);
-  var completer = new Completer<Connection>();
-  
-  //FIXME refactor.
-  c.onEvent = (e) {
-    if (e.type == _EVENT_CONNECTED) {
-      completer.complete(c);
-      //c.onEvent = null;
-    } else if (e.type == _EVENT_FATAL_ERROR) {
-      completer.completeException('Boom!'); //TODO pass correct error message.
-      //c.onEvent = null;
-    } else if (e.type == _EVENT_QUERY_COMPLETE) {
-      assert(c._query != null);
-      c._query._streamer.complete(c._query);
-      //FIXME handle query errors.
-    }
-  };
-  c._connect();
-  return completer.future;
+  return c._connect();
 }
 
 typedef void _EventHandler(_Event);
@@ -84,19 +67,20 @@ class _Connection implements Connection {
   bool get _ok => _state == _IDLE || _state == _BUSY || _state == _READY;
   
   final Queue<_Query> _sendQueryQueue = new Queue<_Query>();
-  _Query _query; // The query currently being sent, or having it's results processed.
-  
+  _Query _query; // The query currently being sent, or having it's results processed.  
   Socket _socket;
   Uint8List _output;
   _MessageReader _reader;
   _MessageWriter _writer;
   List<PgError> _errors;
+  final Completer<Connection> _connectCompleter;
   
   final Settings settings;
   final Queue<_Event> _events = new Queue<_Event>();
   
   _Connection(Settings settings)
-      : this.settings = (settings == null) ? defaultSettings : settings {
+      : this.settings = (settings == null) ? defaultSettings : settings,
+        _connectCompleter = new Completer<Connection>() {
         
     if (this.settings == null)
       throw new Exception('No connection settings specified.');
@@ -117,37 +101,32 @@ class _Connection implements Connection {
     print(msg);
   }
   
-  //TODO change to add/removeEventHandler()
-  _EventHandler onEvent;
-  
-  // Events are queued and then fired just before control returns to client
-  // code.
-  //TODO There is probably a simpler way to do this. Hmmmm.
-  void _fireEvents() {
-    for (var e in _events) {
-      print('Fire event: $e');
-      if (onEvent != null)
-        onEvent(e);
-    }
-    _events.clear();
-  }
-  
   // Something bad happened, but keep connection alive.
   // Todo distinguish between client and server generated errors.
   //TODO error codes. Maybe use a preprocessor to make these.
   void _error(int code, String msg) {
     _log('Error: $msg');
-    _errors.addLast(new PgError(code, msg));
-    _events.addLast(new _Event(_EVENT_ERROR));
+    var err = new PgError(code, msg);
+    _errors.addLast(err);
+    if (!_connectCompleter.future.isComplete)
+      _connectCompleter.completeException(err);
+    
+    //FIXME fire event.
   }
   
   // Something really bad happened, close connection and report error.
   void _fatalError(int code, String msg) {
     _log('Fatal error: $msg');
-    _errors.addLast(new PgError(code, msg));
-    _events.addLast(new _Event(_EVENT_FATAL_ERROR));
+    var err = new PgError(code, msg);
+    _errors.addLast(err);
+    
+    if (!_connectCompleter.future.isComplete)
+      _connectCompleter.completeException(err);
+    
+    //FIXME fire event.
+    
+    //TODO don't send close message.
     close();
-    _fireEvents();
   }
   
   List<PgError> popErrors() {
@@ -156,38 +135,42 @@ class _Connection implements Connection {
     return errors;
   }
   
-  void _connect() {
+  Future<Connection> _connect() {
     if (_state != _NOT_CONNECTED) {
-      _fatalError(0, '_connected() called while in invalid state: $_state.');
-      return;      
+      _fatalError(0, 'connect() called while in invalid state: $_state.');
+      return _connectCompleter.future;      
     }
     
     try {
       _socket = new Socket(settings.host, settings.port);
     } catch (ex) {
       _fatalError(0, 'Socket error: $ex.');
-      return;
+      return _connectCompleter.future;
     }
     
     _socket
     ..onConnect = () {
       _changeState(_SOCKET_CONNECTED);
       _sendStartupMessage();
-      _fireEvents();
     }
     ..onError = (err) {
       _fatalError(0, 'Socket error: $err.');
+      if (!_connectCompleter.future.isComplete)
+        _connectCompleter.completeException(err);
     }
     ..onClosed = () {
-      //TODO don't log this error if the close was user initiated.
-      _fatalError(0, 'Socket closed.');
+      String err = 'Socket closed.';
+      _fatalError(0, err);
+      if (!_connectCompleter.future.isComplete)
+        _connectCompleter.completeException(err);
     }
     ..onData = () {
       _readData();
-      _fireEvents();
     };
     
     _changeState(_SOCKET_CONNECTING);
+    
+    return _connectCompleter.future;
   }
   
   void _sendStartupMessage() {
@@ -215,21 +198,32 @@ class _Connection implements Connection {
   
   void close() {
     
+    //TODO Send close message.
+    
     if (_state == _CLOSED)
       return;
     
     _state = _CLOSED;
     _socket.close();
-    
-    //TODO Free buffers. But make sure that no handlers try and read from them.
-    
-    _events.addLast(new _Event(_EVENT_CLOSED));
-    _fireEvents();
   }
   
-  Query query(String sql) {
+  Query query(String sql, {int timeoutMillis, Object resultType, ResultMapper resultMapper}) {
     
-    var q = new _Query(sql, _reader);
+    //TODO
+    if (timeoutMillis != null)
+      throw new Exception('Query timeout not implemented.');
+    
+    //TODO
+    if (resultType != null)
+      throw new Exception('Result type mapping not implemented.');
+    
+    if (resultMapper != null && resultType != null)
+      throw new Exception('Query() can take a resultReader, or a resultType, but not both.');
+    
+    if (resultMapper == null)
+      resultMapper = new _DefaultResultMapper(); 
+    
+    var q = new _Query(sql, resultMapper, new _ResultReader(_reader));
     
     if (sql == null) {
       q.changeState(_FAILED);
@@ -287,14 +281,15 @@ class _Connection implements Connection {
     _writer.endMessage();
     
     _changeState(_BUSY);
-    
+
     _sendMessage();
+
     
     //FIXME, This needs to be occasionally delayed, as the socket write
     // sometimes needs to be completed asynchronously.
     // Perhaps send message should return a bool, and take a callback.
     // Or just return a future.
-    _events.addLast(new _Event(_EVENT_QUERY_SENT));
+    _query.changeState(_SENT);
   }  
   
   void _handleAuthenticationRequest(_MessageReader r) {
@@ -335,24 +330,33 @@ class _Connection implements Connection {
       r.skipMessage();
       _fatalError(0, 'Received ReadyForQuery message from server while in invalid state: $_state.');
       return;
-    }
-    
-    if (_state == _AUTHENTICATED)
-      _events.addLast(new _Event(_EVENT_CONNECTED));
-    else
-      _events.addLast(new _Event(_EVENT_QUERY_COMPLETE)); 
-      //FIXME Pass _query as event argument, incase the connection variable gets overwritten, by a subsequeny query.
+    } 
     
     int c = r.readByte();
     
     if (c == 'I'.charCodeAt(0)) {
-      _changeState(_IDLE);
+      // Do nothing.
     } else if (c == 'T'.charCodeAt(0)) {
-      _fatalError(0, 'Transaction handling not implemented.');
+      _error(0, 'Transaction handling not implemented.');
     } else if (c == 'E'.charCodeAt(0)) {
-      _fatalError(0, 'Transaction handling not implemented.');
+      _error(0, 'Transaction handling not implemented.');
     } else {
       _fatalError(0, 'Unknown ReadyForQuery transaction status: ${_itoa(c)}');
+    }
+    
+    var s = _state;
+    var q = _query;
+    
+    _query = null;
+    _changeState(_IDLE);
+    
+    if (s == _AUTHENTICATED) {
+      if (!_connectCompleter.future.isComplete) {
+        _connectCompleter.complete(this);
+      }
+    } else {
+      q.onQueryComplete();
+      _processSendQueryQueue();
     }
   }
   
@@ -366,7 +370,7 @@ class _Connection implements Connection {
       var msg = r.readString();
       list.add(new PgError(code, msg));
       code = r.readByte();
-      _log('Error: $msg');
+      _log('Error ${_itoa(code)} $msg');
     }
     
     if (_state == _AUTHENTICATING) {
@@ -375,13 +379,12 @@ class _Connection implements Connection {
       return;
     }
     
-    // I assume this has something to do with attaching errors to a query.
     if (_state == _BUSY) {
       if (_query != null 
           && (_query.state == _SENT || _query.state == _RESULTS_READY)) {
-        _query.handleError(list);
         _query.changeState(_COMPLETE);
         _changeState(_READY);
+        _query.onQueryError(list);
       } else {
         _errors.addAll(list);
         _changeState(_READY);
@@ -392,6 +395,8 @@ class _Connection implements Connection {
     // Errors aren't expected in this state - but worth logging them anyways if
     // they happen.
     //FIXME Perhaps these should be added as notices in this case??
+    
+    //TODO fire error event.
     _errors.addAll(list);
     
   }
@@ -423,7 +428,7 @@ class _Connection implements Connection {
       list[i] = new _ColumnDesc(i, name, fieldId, tableColNo, fieldType, dataSize, typeModifier, formatCode);
     }
     
-    _query.addColumnDescs(list);
+    _query.onRowDescription(list);
     
     _changeState(_READY);
   }
@@ -479,9 +484,8 @@ class _Connection implements Connection {
     SOCKET_READ: for(int i = 0; i < 100; i++) {
       
       if (r.bytesAvailable > 0)
-        print('Message fragment left in buffer - bytesAvailable: ${r.bytesAvailable}.');
+        _log('Message fragment left in buffer - bytesAvailable: ${r.bytesAvailable}.');
       
-      print('Read more data from socket.');
       r.appendFromSocket(_socket);
       
       r._buffer._logState();
@@ -536,7 +540,7 @@ class _Connection implements Connection {
           if (r.bytesAvailable < 7)
             continue SOCKET_READ; // Read more data.
 
-          _query.processDataRows();
+          _query.onDataRow();
           
           continue NEXT_MSG;
         }
@@ -570,7 +574,7 @@ class _Connection implements Connection {
         // Parse message header - advances 5 bytes.
         r.startMessage();
         
-        _log('Read message header, type: ${_itoa(r.messageType)}, code: ${r.messageType}, length: ${r.messageLength}, offset: ${r.messageStart}.');
+        //_log('Read message header, type: ${_itoa(r.messageType)}, code: ${r.messageType}, length: ${r.messageLength}, offset: ${r.messageStart}.');
 
         // Check for sane message size - need to prevent accidently reading a
         // massive number of bytes into our buffer.
@@ -617,6 +621,10 @@ class _Connection implements Connection {
       
       case _MSG_BACKEND_KEY_DATA:
       case _MSG_PARAMETER_STATUS:
+        //_log('Ignoring unimplemented message type: ${_itoa(t)} ${_messageName(t)}.');
+        r.skipMessage();
+        break;
+        
       case _MSG_NOTICE_RESPONSE:
       case _MSG_NOTIFICATION_RESPONSE:
       case _MSG_BIND:

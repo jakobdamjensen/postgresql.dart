@@ -1,4 +1,32 @@
 
+class _DefaultResultMapper implements ResultMapper {
+  
+  List<Dynamic> _row;
+  
+  void onData(ResultReader r, Streamer streamer) {
+    
+    while (r.hasNext()) {
+      if (r.event == ERROR) {
+        if (!streamer.future.isComplete)
+          streamer.completeException(r.error); //TODO Only first error is sent. Check that this matches protocol description.
+      
+      } else if (r.event == START_ROW) {
+        _row = new List<Dynamic>();
+      } else if (r.event == END_ROW) {
+        streamer.send(_row);
+      } else if (r.event == COLUMN_DATA) {
+        _row.add(r.value);
+      } else if (r.event == START_COMMAND) {
+        //Do nothing
+      } else if (r.event == END_COMMAND) {
+        //Do nothing
+      } else {
+        assert(false);
+      }
+    }
+  }
+}
+
 class _ResultReader implements ResultReader, ZeroCopyResultReader {
   
   _ResultReader(this._msgReader);
@@ -68,14 +96,12 @@ class _ResultReader implements ResultReader, ZeroCopyResultReader {
     _event = START_ROW;
     _state = _STATE_COL_HEADER;
     
-    print('DataRow header, row: $row, column count: $_colCount, offset: ${r._msgStart}.');
     return true;
   }
   
   bool _hasNextColHeader() {
     assert(_state == _STATE_COL_HEADER);
     
-    print('_column: $_column, colCount: $_colCount.');
     if (_column + 1 >= _colCount) {      
       _column = -1;
       _event = END_ROW;
@@ -94,7 +120,6 @@ class _ResultReader implements ResultReader, ZeroCopyResultReader {
     assert(_colSize > 0);
     
     _column++;
-    print('DataRow column. row index: $_row, column index: $_column, size: $_colSize.');
     
     //TODO check if colSize is allowed to be big.
     // I.e. check against data type oids.

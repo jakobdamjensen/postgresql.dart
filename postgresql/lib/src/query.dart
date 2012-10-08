@@ -1,65 +1,48 @@
 
-
 class _Query implements Query {  
   
-  _Query(this.sql, _MessageReader _msgReader)
-    : _state = _CREATED,
-      _resultReader = new _ResultReader(_msgReader);
+  _Query(this.sql, this._resultMapper, this._resultReader)
+    : _state = _CREATED;
   
   _QueryState _state;
-  ReadResultCallback _resultCallback;
-  final _ResultReader _resultReader;
-  final List<PgError> _errors = new List<PgError>();
-  final List<List<ColumnDesc>> _columnDescs = new List<List<ColumnDesc>>();
   
-  final String sql;  
-  
+  final String sql;
   _QueryState get state => _state;
-  
+  final ResultMapper _resultMapper;
+  final _ResultReader _resultReader;
   final Streamer<Dynamic> _streamer = new Streamer<Dynamic>();
+  Dynamic _error;
+  
+  void _log(String msg) => print(msg);
   
   void changeState(_QueryState state) {
     //TODO use _log
     print('Query state change: $_state => $state.');
     _state = state;
   }
-    
-  void readResult(ReadResultCallback callback) {
-    //TODO check for invalid query state. I.e. already submitted.
-    _resultCallback = callback;
+  
+  void onRowDescription(List<ColumnDesc> columns) {
+    _resultReader.columnDescs = columns;
   }
   
-  //void readResultZeroCopy(ReadResultZeroCopyCallback callback);
-  
-  void addColumnDescs(List<ColumnDesc> list) {
-    //FIXME this needs a bit of a refactor.
-    _columnDescs.add(list);
-    _resultReader.columnDescs = list;
+  void onDataRow() {
+    _resultMapper.onData(_resultReader, _streamer);
   }
   
-  // Called from connection main processing loop to kick of the result
-  // processing process. 
-  void processDataRows() {
-    if (_resultCallback == null)
-      _resultCallback = _rowResultsReader;
-    _resultCallback(_resultReader, _streamer);
-  }
-  
-  void _rowResultsReader(_ResultReader r, Streamer streamer) {
-    List<Dynamic> row;
-    while (r.hasNext()) {
-      if (r.event == ERROR) {
-        print('Query error: ${r.error}');
-        _errors.add(new PgError(0, r.error));
-      
-      } else if (r.event == START_ROW) {
-        row = new List<Dynamic>();
-      } else if (r.event == END_ROW) {
-        streamer.send(row);
-      } else if (r.event == COLUMN_DATA) {
-        row.add(r.value);
+  void onQueryComplete() {
+    if (!_streamer.future.isComplete) {      
+      if (_error == null) {
+        _log('Query completed successfully.');
+        _streamer.complete(this);
+      } else {
+        _log('Query completed with error: $_error.');
+        _streamer.completeException(_error);
       }
     }
+  }
+  
+  void onQueryError(err) {
+    _error = err;
   }
   
   // Delegate to stream impl.

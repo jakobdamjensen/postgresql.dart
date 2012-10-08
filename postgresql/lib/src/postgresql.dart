@@ -1,3 +1,4 @@
+// Public interface.
 
 Settings defaultSettings = null;
 
@@ -29,21 +30,19 @@ Future<Connection> connect([Settings settings = null]) {
 
 abstract class Connection {
   //TODO Future<int> exec(String sql);
-  Query query(String sql);
+  //TODO ConnectionState get state;
+  Query query(String sql, {int timeoutMillis, Object resultType, ResultMapper resultMapper});
   void close();
 }
 
-typedef void ReadResultCallback(ResultReader r, Streamer streamer);
-typedef void ZeroCopyReadResultCallback(ZeroCopyResultReader r, Streamer streamer);
-
 abstract class Query extends Stream<Dynamic> {
-  
-  //TODO void cancel();
-  
-  // Note this callback will be called each time the buffer is filled, so
-  // don't store state in local variables.
-  void readResult(ReadResultCallback callback);
-  void readResultZeroCopy(ZeroCopyReadResultCallback callback);
+  //TODO QueryState get state;
+  //TODO void cancel();  
+}
+
+abstract class ResultMapper {
+  void onRowDescription(List<ColumnDesc> columns);
+  void onData(ResultReader r, Streamer streamer);
 }
 
 //TODO remove impl.
@@ -75,7 +74,7 @@ const ERROR = const ResultReaderEventType('error');
 const COLUMN_DATA_FRAGMENT = const ResultReaderEventType('column-data-fragment');
 
 abstract class ResultReader {
-  
+
   bool hasNext();  
   
   int get command;
@@ -92,7 +91,7 @@ abstract class ResultReader {
   String asString();
   int asInt();
   bool asBool();
-  List<int> asDecimal();
+  Decimal asDecimal();
   List<int> asBytes();
   
   // This can only be called when event == END_COMMAND

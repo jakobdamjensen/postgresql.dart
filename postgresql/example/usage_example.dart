@@ -10,13 +10,12 @@ void main() {
     runExampleQueries(c);
   })
   ..handleException((e) {
-    print(e);
+    print('Exception: $e');
     return true;
   });
 }
 
-
-void runExampleQueries(pg.Connection c) {
+void runExampleQuery(pg.Connection c) {
   var sql = 'select 1 as one, \'2\' as two, 3.1 as three;';
   
   c.query(sql).one()
@@ -25,5 +24,37 @@ void runExampleQueries(pg.Connection c) {
     })
     ..handleException((err) {
       print(err);
+      return true;
     });
 }  
+
+void runExampleQueryBad(pg.Connection c) {
+  //var sql = 'select 1 as one, \'2\' as two, 3.1 as three;';
+  var sql = 'dsfsdfdsf';
+  
+  c.query(sql).one()
+    ..then((result) {
+      print(result);
+    })
+    ..handleException((err) {
+      print(err);
+      return true;
+    });
+}
+
+void runExampleQueries(pg.Connection c) {
+  
+  var q1 = c.query('select 1 as one, \'2\' as two, 3.1 as three').one();
+  var q2 = c.query('select 1 as one, \'2\' as two, 3.1 as three').one();
+  var q3 = c.query('select 1 as one, \'2\' as two, 3.1 as three').one();
+  
+  Futures.wait([q1, q2, q3])
+  ..then((result) {
+    print(result);
+  })
+  ..handleException((err) {
+    print(err);
+    return true;
+  });
+  
+}
