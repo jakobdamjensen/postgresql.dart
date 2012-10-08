@@ -1,0 +1,7 @@
+name:  postgresql.dart
+description:  Library to connect to a Postgresql database.
+version: 0.0.1
+author: Greg Lowe <greg@vis.net.nz>
+homepage: https://github.com/xxgreg/postgresql.dart
+#dependencies:
+#  unittest: { sdk: unittest }

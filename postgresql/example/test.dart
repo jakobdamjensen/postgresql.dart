@@ -1,3 +1,26 @@
+//#library('postgresql');
+
+//FIXME imports ?
+#import('dart:crypto');
+#import('dart:io');
+#import('dart:isolate');
+#import('dart:math');
+#import('dart:scalarlist');
+
+#source('../lib/src/postgresql.dart');
+
+#source('../lib/src/circular_block_buffer.dart');
+#source('../lib/src/column_desc.dart');
+#source('../lib/src/connection.dart');
+#source('../lib/src/constants.dart');
+#source('../lib/src/encoding.dart');
+#source('../lib/src/message_reader.dart');
+#source('../lib/src/message_writer.dart');
+#source('../lib/src/query.dart');
+#source('../lib/src/row_description.dart');
+#source('../lib/src/result_reader.dart');
+#source('../lib/src/simple_buffer.dart');
+#source('../lib/src/stream.dart');
 
 void main() {
   testBuffer5();
