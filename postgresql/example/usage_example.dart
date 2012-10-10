@@ -7,7 +7,7 @@ void main() {
   pg.connect(s)
   ..then((c) {
     print('connected...');
-    runExampleQueries(c);
+    runExampleQuery(c);
   })
   ..handleException((e) {
     print('Exception: $e');
@@ -20,7 +20,9 @@ void runExampleQuery(pg.Connection c) {
   
   c.query(sql).one()
     ..then((result) {
-      print(result);
+      print(result.one);
+      print(result.two);
+      print(result.three);
     })
     ..handleException((err) {
       print(err);
