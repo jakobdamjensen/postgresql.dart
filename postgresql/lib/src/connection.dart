@@ -273,7 +273,7 @@ class _Connection implements Connection {
   }
   
   // TODO handle long error messages, that don't fit into the buffer.
-  void _handleErrorResponse(_MessageReader r) {
+  void _handleErrorOrNoticeResponse(_MessageReader r, {bool isError}) {
     
     // Parse error message.
     
@@ -286,7 +286,8 @@ class _Connection implements Connection {
       code = r.readByte();
     }
     
-    var err = new _PgError.error(fields);
+    var err = isError ? new _PgError.error(fields)
+                        : new _PgError.notice(fields); 
     
     if (_state == _AUTHENTICATING) {
       // Authentication failed.
@@ -414,27 +415,34 @@ class _Connection implements Connection {
         // Make sure there is enough data available to read the message header.
         if (r.bytesAvailable < 5)
           continue SOCKET_READ;
+        
+        // Peek at the message type.
+        int mtype = r.peekByte();
+        
+        // In authenticating state only handle a subset of the message types.
+        if (_state == _AUTHENTICATING
+            && mtype != _MSG_AUTH_REQUEST
+            && mtype != _MSG_ERROR_RESPONSE) {
           
-        //TODO
-        //In authenticating and authenticated state only handle a subset of the message types.
-        if (_state == _AUTHENTICATING) {
-          //const authenticatingTypes = [sdfsdf, sdfsdfsdf, sdfsdfsdf];
-          //if (!authenticatingTypes.contains(msgType)) {
-          //  _fatalError(0, 'Unexpected message type while in authenticating state, type: ${_atoi(msgType)}.');
-          //  return;
-          //}
-        } else if (_state == _AUTHENTICATED) {
-          //const authenticatedTypes = [sdfsdf, sdfsdfsdf, sdfsdfsdf];
-          //if (!authenticatedTypes.contains(msgType)) {
-          //  _fatalError(0, 'Unexpected message type while in authenticated state, type: ${_atoi(msgType)}.');
-          //  return;
-          //}
+          _fatalError(new _PgError.client('Unexpected message type. Are you sure you connect to a postgresql database? MsgType: \'${_itoa(mtype)}\'.'));
+          return;
+        }
+          
+        // In authenticated state only handle a subset of the message types.
+        if (_state == _AUTHENTICATED
+            && mtype != _MSG_BACKEND_KEY_DATA 
+            && mtype != _MSG_PARAMETER_STATUS
+            && mtype != _MSG_READY_FOR_QUERY
+            && mtype != _MSG_ERROR_RESPONSE
+            && mtype != _MSG_NOTICE_RESPONSE) {
+            
+          _fatalError(new _PgError.client('Unexpected message type while in authenticated state: ${_itoa(mtype)}.'));
+          return;
         }
 
         // If it's a large message type, then we'll need to hand over to a
         // separate routine to handle it, as these can handle message fragments
         // and don't require the entire message to be read into the buffer.
-        int mtype = r.peekByte();
         
         if (mtype == _MSG_DATA_ROW) { // or a partial message and state is query_reading.
           if (_state != _READY) {
@@ -450,28 +458,31 @@ class _Connection implements Connection {
           continue NEXT_MSG;
         }
         
-        if (mtype == _MSG_ERROR_RESPONSE || mtype == _MSG_NOTICE_RESPONSE) {
-          //TODO implement me. Read data without buffering it all.
+        // Currently handled with standard messages.
+        //TODO implement me. Read data without buffering it all.
+        //if (mtype == _MSG_ERROR_RESPONSE || mtype == _MSG_NOTICE_RESPONSE) {
+          // Hand over to fragment reader.
           //continue NEXT_MSG;
-        }  
+        //}  
         
         // Currently handled with standard messages.
         // TODO need to handle large row description messages. Currently this
         // could lead to the buffer growing to a huge size.
         //if (mtype == _MSG_ROW_DESCRIPTION) {
         // continue NEXT_MSG;
-        //} else
+        //}
         
-        else if (mtype == _MSG_FUNCTION_CALL_RESPONSE
-                 || mtype == _MSG_NOTIFICATION_RESPONSE
-                 || mtype == _MSG_COPY_DATA) {
+        //if (mtype == _MSG_FUNCTION_CALL_RESPONSE
+        //         || mtype == _MSG_NOTIFICATION_RESPONSE
+        //         || mtype == _MSG_COPY_DATA) {
           // Not implemented.
           //TODO skip data without buffering.
           //continue NEXT_MSG;
-        }
+        //}
 
-        // Standard size message handlers. These messages must be less than 30k,
-        // so we can buffer them safely.
+        
+        // Standard size message handlers. These messages are always less than 
+        // 30k, so we can buffer them safely.
 
         // Parse message header - advances 5 bytes.
         r.startMessage();
@@ -516,18 +527,19 @@ class _Connection implements Connection {
     
     switch (t) {
       case _MSG_AUTH_REQUEST: _handleAuthenticationRequest(r); break;
-      case _MSG_ERROR_RESPONSE: _handleErrorResponse(r); break;
       case _MSG_COMMAND_COMPLETE: _handleCommandComplete(r); break;
       case _MSG_READY_FOR_QUERY: _handleReadyForQuery(r); break;
       case _MSG_ROW_DESCRIPTION: _handleRowDescription(r); break;
+      
+      case _MSG_ERROR_RESPONSE: _handleErrorOrNoticeResponse(r, isError: true); break;
+      case _MSG_NOTICE_RESPONSE: _handleErrorOrNoticeResponse(r, isError: false); break;
       
       case _MSG_BACKEND_KEY_DATA:
       case _MSG_PARAMETER_STATUS:
         //_log('Ignoring unimplemented message type: ${_itoa(t)} ${_messageName(t)}.');
         r.skipMessage();
         break;
-        
-      case _MSG_NOTICE_RESPONSE:
+
       case _MSG_NOTIFICATION_RESPONSE:
       case _MSG_BIND:
       case _MSG_BIND_COMPLETE:
