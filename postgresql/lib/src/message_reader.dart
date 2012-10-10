@@ -42,7 +42,7 @@ class _MessageReader {
 //      int b = _buffer.block.list[i + 2];
 //      int c = _buffer.block.list[i + 3];
 //      int d = _buffer.block.list[i + 4];
-//      int len = (a << (8*3)) + (b << (8*2)) + (c << 8) + d;
+//      int len = _decodeInt32(a, b, c, d);
 //      _log('Message: ${_itoa(mtype)} ${_messageName(mtype)} length: $len.');
 //      i += len;
 //    }
@@ -88,10 +88,7 @@ class _MessageReader {
     // _buffer.block.start += 2;
     //}
     
-    //TODO handle negative integers
-    // Also ByteArray might learn how to handle big endian numbers at some
-    // stage. If so then use it because it will likely be faster.
-    return (a << 8) + b;
+    return _decodeInt16(a, b);
   }
   
   int readInt32() {
@@ -113,12 +110,32 @@ class _MessageReader {
     // _buffer.block.start += 4;
     //}
     
-    //TODO handle negative integers
-    // Also ByteArray might learn how to handle big endian numbers at some
-    // stage. If so then use it because it will likely be faster.
-    return (a << (8*3)) + (b << (8*2)) + (c << 8) + d;
+    return _decodeInt32(a, b, c, d);
   }
+
+  // Big endian two's complement.
+  // Please, somebody show me the cool way to do it with bitwise operators ;)
+  int _decodeInt16(int a, int b) {
+    assert(a < 256 && b < 256 && a >= 0 && b >= 0);
+    int i = (a << 8) | (b << 0); 
     
+    if (i >= 0x8000)
+      i = -0x10000 + i;
+    
+    return i;
+  }
+
+  // Big endian two's complement.
+  int _decodeInt32(int a, int b, int c, int d) {
+    assert(a < 256 && b < 256 && c < 256 && d < 256 && a >= 0 && b >= 0 && c >= 0 && d >= 0);
+    int i = (a << 24) | (b << 16) | (c << 8) | (d << 0);
+    
+    if (i >= 0x80000000)
+      i = -0x100000000 + i;
+    
+    return i;
+  }
+  
   // Slow simple version.
   //TODO Fast version that just searches for null char and copies accross one
   //buffer at a time. See readString_v2()

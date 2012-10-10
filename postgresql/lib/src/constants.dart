@@ -10,7 +10,7 @@ const int _STATE_COL_HEADER = 1;
 const int _STATE_COL_DATA = 2;
 
 
-const _FAILED = const _QueryState('Failed');
+const _FAILED = const _QueryState('Failed'); // This state isn't really used.
 const _CREATED = const _QueryState('Created');
 const _QUEUED = const _QueryState('Queued');
 const _SENDING = const _QueryState('Sending');
@@ -63,6 +63,7 @@ const int _AUTH_TYPE_OK = 0;
 const int _MSG_STARTUP = -1; // Fake message type as StartupMessage has no type in the header.
 const int _MSG_PASSWORD = 112; // 'p'
 const int _MSG_QUERY = 81; // 'Q'
+const int _MSG_TERMINATE = 88; // 'X'
 
 // Message types sent by the server.
 const int _MSG_AUTH_REQUEST = 82; //'R'.charCodeAt(0);

@@ -1,7 +1,41 @@
 
+class _Row {
+  _Row(this._columnNames, this._values) {
+    //assert(this._columnNames.length == this._values.length);
+  }
+  
+  final List<String> _columnNames;
+  final List<Dynamic> _values;
+  
+  operator[] (int i) => _values[i];
+  
+  noSuchMethod(String name, _) {
+    
+    //FIXME only allowed this for debugging.
+    if (_columnNames == null)
+      return;
+    
+    if (name.startsWith('get:')) {
+      var colName = name.substring(4, name.length);
+      var i = _columnNames.indexOf(colName);
+      if (i != -1)
+        return _values[i];
+      else
+        //FIXME throw NoSuchMethodError
+        throw new Exception('Unknown column name: $colName.');
+    } else {
+      //FIXME throw NoSuchMethodError 
+    }
+  }
+  
+  String toString() => _values.toString();
+}
+
 class _DefaultResultMapper implements ResultMapper {
   
-  List<Dynamic> _row;
+  _Row _row;
+  List<String> _columnNames;
+  List<Dynamic> _values;
   
   void onData(ResultReader r, Streamer streamer) {
     
@@ -11,13 +45,14 @@ class _DefaultResultMapper implements ResultMapper {
           streamer.completeException(r.error); //TODO Only first error is sent. Check that this matches protocol description.
       
       } else if (r.event == START_ROW) {
-        _row = new List<Dynamic>();
+        _values = new List<Dynamic>(r.columnCount);
       } else if (r.event == END_ROW) {
-        streamer.send(_row);
+        var row = new _Row(_columnNames, _values);
+        streamer.send(row);
       } else if (r.event == COLUMN_DATA) {
-        _row.add(r.value);
+        _values[r.column] = r.value;
       } else if (r.event == START_COMMAND) {
-        //Do nothing
+        _columnNames = r.columnDescs.map((c) => c.name);
       } else if (r.event == END_COMMAND) {
         //Do nothing
       } else {
@@ -52,10 +87,12 @@ class _ResultReader implements ResultReader, ZeroCopyResultReader {
   int get row => _row;
   int get column => _column;
   int get columnSizeInBytes => _colSize;
-  ColumnDesc get columnDesc => columnDescs[column];  
+  ColumnDesc get columnDesc => columnDescs[column];
+  int get columnCount => columnDescs.length;
   ResultReaderEventType get event => _event;
   Dynamic get error => _error;
   
+  //TODO emit START/END_COMMAND events.
   // Read another value if there is one in the buffer.
   bool hasNext() {
     switch (_state) {

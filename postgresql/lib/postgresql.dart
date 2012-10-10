@@ -15,8 +15,10 @@
 #source('src/encoding.dart');
 #source('src/message_reader.dart');
 #source('src/message_writer.dart');
+#source('src/pg_error.dart');
 #source('src/query.dart');
 #source('src/row_description.dart');
 #source('src/result_reader.dart');
+#source('src/settings.dart');
 #source('src/simple_buffer.dart');
 #source('src/stream.dart');

@@ -51,6 +51,7 @@ void runExampleQueries(pg.Connection c) {
   Futures.wait([q1, q2, q3])
   ..then((result) {
     print(result);
+    c.close();
   })
   ..handleException((err) {
     print(err);

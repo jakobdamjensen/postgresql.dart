@@ -4,61 +4,6 @@ Future<Connection> _connect([Settings settings = null]) {
   return c._connect();
 }
 
-typedef void _EventHandler(_Event);
-
-//TODO make me a const class.
-class _Event {
-  _Event(this.type);
-  final int type;
-  String toString() {
-    if (type == _EVENT_CONNECTED)
-      return '_EVENT_CONNECTED';
-    else if (type == _EVENT_QUERY_SENT)
-      return '_EVENT_QUERY_SENT';
-    else if (type == _EVENT_QUERY_COMPLETE)
-      return '_EVENT_QUERY_COMPLETE';
-    else if (type == _EVENT_ERROR)
-      return '_EVENT_ERROR';
-    else if (type == _EVENT_FATAL_ERROR)
-      return '_EVENT_FATAL_ERROR';
-    else if (type == _EVENT_CLOSED)
-      return '_EVENT_CLOSED';
-    else
-      return 'Unknown event: $type.';
-  }
-}
-
-const int _EVENT_CONNECTED = 1;
-const int _EVENT_QUERY_SENT = 2;
-const int _EVENT_QUERY_COMPLETE = 3;
-const int _EVENT_ERROR = 4;
-const int _EVENT_FATAL_ERROR = 5;
-const int _EVENT_CLOSED = 6;
-
-class _Settings implements Settings {
-  _Settings(this.host,
-      this.port,
-      String username,
-      this.database,
-      //this._params,
-      String password)
-    : username = username,
-      passwordHash = _md5s(password.concat(username));
-  
-  final String host;
-  final int port;
-  final String username;
-  final String database;
-  //final Map<String,String> _params;
-  final String passwordHash;
-}
-
-String _md5s(String s) {
-  var hash = new MD5();
-  hash.update(s.charCodes());
-  return CryptoUtils.bytesToHex(hash.digest());
-}
-
 class _Connection implements Connection {
     
   // Don't set this directly use _changeState().
@@ -72,79 +17,88 @@ class _Connection implements Connection {
   Uint8List _output;
   _MessageReader _reader;
   _MessageWriter _writer;
-  List<PgError> _errors;
-  final Completer<Connection> _connectCompleter;
-  
+  final Completer<Connection> _connectCompleter = new Completer<Connection>();
   final Settings settings;
-  final Queue<_Event> _events = new Queue<_Event>();
   
   _Connection(Settings settings)
-      : this.settings = (settings == null) ? defaultSettings : settings,
-        _connectCompleter = new Completer<Connection>() {
+      : this.settings = (settings == null) ? defaultSettings : settings {
         
+    //TODO throw error via completer instead.
+    // Or check settings value in the _connect() function.
     if (this.settings == null)
       throw new Exception('No connection settings specified.');
           
-    _output = new Uint8List(OUTPUT_BUFFER_SIZE);
+    _output = new Uint8List(OUTPUT_BUFFER_SIZE); //TODO make buffer sizes configurable.
     _reader = new _MessageReader(INPUT_BUFFER_SIZE, 2);
     _writer = new _MessageWriter(_output);
-    
-    _errors = new List<PgError>();
   }
   
   void _changeState(_ConnectionState state) {
-    _log('Connection state change: ${_state} => ${state}');
+    if (_state != state)
+      _log('Connection state change: ${_state} => ${state}');
     _state = state;
   }
   
-  void _log(String msg) {
-    print(msg);
-  }
+  void _log(String msg) => print(msg);
   
   // Something bad happened, but keep connection alive.
-  // Todo distinguish between client and server generated errors.
-  //TODO error codes. Maybe use a preprocessor to make these.
-  void _error(int code, String msg) {
-    _log('Error: $msg');
-    var err = new PgError(code, msg);
-    _errors.addLast(err);
-    if (!_connectCompleter.future.isComplete)
+  void _error(_PgError err) {
+    _log(err.toString());
+
+    if ((_state == _NOT_CONNECTED 
+        || _state == _SOCKET_CONNECTING
+        || _state == _SOCKET_CONNECTED
+        || _state == _AUTHENTICATING
+        || _state == _AUTHENTICATED)
+          && !_connectCompleter.future.isComplete
+          && err.type != SERVER_NOTICE) {
+
       _connectCompleter.completeException(err);
-    
-    //FIXME fire event.
+
+    } else if ((_state == _BUSY || _state == _READY) 
+        && err.type != SERVER_NOTICE) {
+      
+      assert(_query != null);
+      _query.changeState(_COMPLETE);
+      _query._streamer.completeException(err);
+      
+    } else {
+      if (settings.onUnhandledErrorOrNotice != null)
+        settings.onUnhandledErrorOrNotice(err);
+    }
   }
   
   // Something really bad happened, close connection and report error.
-  void _fatalError(int code, String msg) {
-    _log('Fatal error: $msg');
-    var err = new PgError(code, msg);
-    _errors.addLast(err);
+  void _fatalError(PgError err) {
+    _log('Fatal error: $err');
     
-    if (!_connectCompleter.future.isComplete)
-      _connectCompleter.completeException(err);
-    
-    //FIXME fire event.
-    
-    //TODO don't send close message.
-    close();
+    _changeState(_CLOSED);
+    _error(err);
+
+    // Close the connection without sending a close message.
+    _socket.close();
   }
   
-  List<PgError> popErrors() {
-    var errors = _errors;
-    _errors = new List<PgError>();
-    return errors;
+  void close() {
+    _changeState(_CLOSED);
+
+    // Send terminate message.
+    // Don't worry if there's not enough room in the send buffer to send the
+    // message, as we will close the socket anyway.
+    _writer.startMessage(_MSG_TERMINATE);
+    _writer.endMessage();
+    _sendMessage();
+    
+    _socket.close();
   }
   
   Future<Connection> _connect() {
-    if (_state != _NOT_CONNECTED) {
-      _fatalError(0, 'connect() called while in invalid state: $_state.');
-      return _connectCompleter.future;      
-    }
+    assert(_state == _NOT_CONNECTED);
     
     try {
       _socket = new Socket(settings.host, settings.port);
     } catch (ex) {
-      _fatalError(0, 'Socket error: $ex.');
+      _fatalError(new _PgError.client('Failed to open socket. $ex'));
       return _connectCompleter.future;
     }
     
@@ -153,20 +107,9 @@ class _Connection implements Connection {
       _changeState(_SOCKET_CONNECTED);
       _sendStartupMessage();
     }
-    ..onError = (err) {
-      _fatalError(0, 'Socket error: $err.');
-      if (!_connectCompleter.future.isComplete)
-        _connectCompleter.completeException(err);
-    }
-    ..onClosed = () {
-      String err = 'Socket closed.';
-      _fatalError(0, err);
-      if (!_connectCompleter.future.isComplete)
-        _connectCompleter.completeException(err);
-    }
-    ..onData = () {
-      _readData();
-    };
+    ..onError = (err) { _fatalError(new _PgError.client('Socket error. $err')); }
+    ..onClosed = () { _fatalError(new _PgError.client('Socket closed.')); }
+    ..onData = _readData;
     
     _changeState(_SOCKET_CONNECTING);
     
@@ -174,10 +117,7 @@ class _Connection implements Connection {
   }
   
   void _sendStartupMessage() {
-    if (_state != _SOCKET_CONNECTED) {
-      _fatalError(0, '_sendStartupMessage() called while in invalid state: $_state.');
-      return;
-    }
+    assert(_state == _SOCKET_CONNECTED);
     
     _writer.startMessage(_MSG_STARTUP);
     _writer.writeInt32(_PROTOCOL_VERSION);
@@ -196,18 +136,10 @@ class _Connection implements Connection {
     _changeState(_AUTHENTICATING);
   }
   
-  void close() {
-    
-    //TODO Send close message.
-    
-    if (_state == _CLOSED)
-      return;
-    
-    _state = _CLOSED;
-    _socket.close();
-  }
-  
   Query query(String sql, {int timeoutMillis, Object resultType, ResultMapper resultMapper}) {
+
+    if (sql == null || sql == '')
+      throw new Exception('Sql is null or empty.');
     
     //TODO
     if (timeoutMillis != null)
@@ -223,25 +155,13 @@ class _Connection implements Connection {
     if (resultMapper == null)
       resultMapper = new _DefaultResultMapper(); 
     
-    var q = new _Query(sql, resultMapper, new _ResultReader(_reader));
+    if (!_ok)
+      throw new Exception('Attempted a query on a closed connection.');
     
-    if (sql == null) {
-      q.changeState(_FAILED);
-      _error(0, 'Null sql string.');
-      return q;
-    }
-    
-    if (!_ok) {
-      q.changeState(_FAILED);
-      //TODO set error on query instead.
-      _error(0, 'Attempted to send a query on a connection which is not in a ok state.');
-      return q;
-    }
-            
+    var q = new _Query(sql, resultMapper, new _ResultReader(_reader));            
     _sendQueryQueue.addLast(q);
     q.changeState(_QUEUED);
     _processSendQueryQueue();
-    
     return q;
   }
   
@@ -250,7 +170,6 @@ class _Connection implements Connection {
     throw new Exception('Not implemented.');
   }
   
-  //TODO call this on query complete event.
   void _processSendQueryQueue() {
     
     if (!_ok)
@@ -264,17 +183,12 @@ class _Connection implements Connection {
     
     var q = _sendQueryQueue.removeFirst();
     
-    if (q.state != _QUEUED) {
-      _error(0, 'Send query failed. Invalid query state: ${q.state}.');
-      return;
-    }
-    
+    assert(q.state == _QUEUED);
     q.changeState(_SENDING);
-    
     _query = q;
    
     //TODO streamed writes for long strings.
-    // At the moment _writer should just bomb if it doesn't fit in the output
+    // At the moment _writer will just bomb if it doesn't fit in the output
     // buffer. 
     _writer.startMessage(_MSG_QUERY);
     _writer.writeString(_query.sql);
@@ -284,7 +198,6 @@ class _Connection implements Connection {
 
     _sendMessage();
 
-    
     //FIXME, This needs to be occasionally delayed, as the socket write
     // sometimes needs to be completed asynchronously.
     // Perhaps send message should return a bool, and take a callback.
@@ -293,9 +206,9 @@ class _Connection implements Connection {
   }  
   
   void _handleAuthenticationRequest(_MessageReader r) {
+    
     if (_state != _AUTHENTICATING) {
-      _fatalError(0, 'Received authentication request from server while in invalid state: $_state.');
-      r.skipMessage();
+      _fatalError(new _PgError.client('Received authentication request from server while in invalid state: $_state.'));
       return;
     }
     
@@ -308,7 +221,7 @@ class _Connection implements Connection {
     
     // Only MD5 authentication is supported.
     if (authType != _AUTH_TYPE_MD5 && authType != _AUTH_TYPE_OK) {
-      _fatalError(0, 'Unsupported or unknown authentication type: ${_authTypeAsString(authType)}, only MD5 authentication is supported.');
+      _fatalError(new _PgError.client('Unsupported or unknown authentication type: ${_authTypeAsString(authType)}, only MD5 authentication is supported.'));
       return;
     }
     
@@ -325,10 +238,9 @@ class _Connection implements Connection {
   
   void _handleReadyForQuery(_MessageReader r) {
     
-    //TODO Check these states. 
+    //TODO Check these states. Perhaps should allow more. 
     if (_state != _READY && _state != _AUTHENTICATED) {
-      r.skipMessage();
-      _fatalError(0, 'Received ReadyForQuery message from server while in invalid state: $_state.');
+      _fatalError(new _PgError.client('Received ReadyForQuery message from server while in invalid state: $_state.'));
       return;
     } 
     
@@ -337,11 +249,12 @@ class _Connection implements Connection {
     if (c == 'I'.charCodeAt(0)) {
       // Do nothing.
     } else if (c == 'T'.charCodeAt(0)) {
-      _error(0, 'Transaction handling not implemented.');
+      _error(new _PgError.client('Transaction handling not implemented.'));
     } else if (c == 'E'.charCodeAt(0)) {
-      _error(0, 'Transaction handling not implemented.');
+      _error(new _PgError.client('Transaction handling not implemented.'));
     } else {
-      _fatalError(0, 'Unknown ReadyForQuery transaction status: ${_itoa(c)}');
+      _fatalError(new _PgError.client('Unknown ReadyForQuery transaction status: ${_itoa(c)}.'));
+      return;
     }
     
     var s = _state;
@@ -351,60 +264,56 @@ class _Connection implements Connection {
     _changeState(_IDLE);
     
     if (s == _AUTHENTICATED) {
-      if (!_connectCompleter.future.isComplete) {
+      if (!_connectCompleter.future.isComplete)
         _connectCompleter.complete(this);
-      }
     } else {
       q.onQueryComplete();
       _processSendQueryQueue();
     }
   }
   
+  // TODO handle long error messages, that don't fit into the buffer.
   void _handleErrorResponse(_MessageReader r) {
     
     // Parse error message.
-    // TODO handle long error messages, that don't fit into the buffer.
+    
     int code = r.readByte();
-    var list = new List<PgError>();
+    var fields = new Map<String,String>();
     while(code != 0) {
+      var char = new String.fromCharCodes([code]);
       var msg = r.readString();
-      list.add(new PgError(code, msg));
+      fields[char] = msg;
       code = r.readByte();
-      _log('Error ${_itoa(code)} $msg');
     }
+    
+    var err = new _PgError.error(fields);
     
     if (_state == _AUTHENTICATING) {
-      _errors.addAll(list);
-      _fatalError(0, 'Authentication failed.');
+      // Authentication failed.
+      _fatalError(err);
       return;
-    }
+    } 
+          
+    //TODO Check what libpq sets the state too after an error.
+    // After issuing a query if there is an error, it should also send a ready
+    // for query, which will cause the state to go back to idle.
+    // if (_state == _BUSY) {
+    //   _changeState(_READY);
+    //   return;
+    // }
     
-    if (_state == _BUSY) {
-      if (_query != null 
-          && (_query.state == _SENT || _query.state == _RESULTS_READY)) {
-        _query.changeState(_COMPLETE);
-        _changeState(_READY);
-        _query.onQueryError(list);
-      } else {
-        _errors.addAll(list);
-        _changeState(_READY);
-      }
-      return;
-    }
+    // Errors aren't expected in non-busy state - but worth logging them anyways
+    // if they happen.
     
-    // Errors aren't expected in this state - but worth logging them anyways if
-    // they happen.
-    //FIXME Perhaps these should be added as notices in this case??
-    
-    //TODO fire error event.
-    _errors.addAll(list);
-    
+    _error(err);
   }
   
+  //TODO consider writing a parser to handle long row description messages.
+  // As these may be longer than 30k.
   void _handleRowDescription(_MessageReader r) {
     
     if (_state != _BUSY) {
-      _error(0, 'Received RowDescription message while not in busy state, state: $_state.');
+      _error(new _PgError.client('Received RowDescription message while not in busy state, state: $_state.'));
       r.skipMessage();
       return;
     }
@@ -435,7 +344,7 @@ class _Connection implements Connection {
   
   void _handleCommandComplete(_MessageReader r) {
     if (_state != _READY) {
-      _error(0, 'Received CommandComplete message while not in ready state, state: $_state.');
+      _error(new _PgError.client('Received CommandComplete message while not in ready state, state: $_state.'));
       r.skipMessage();
       return;
     }
@@ -444,7 +353,7 @@ class _Connection implements Connection {
     var commandTag = r.readString();    
     
     //FIXME
-    //_query._rowProcessor.commandComplete(commandTag);
+    //_query.handleCommandComplete(commandTag);
   }
   
   // Sends a message stored in the output buffer.
@@ -467,7 +376,7 @@ class _Connection implements Connection {
       }
       
     } catch (ex) {
-      _fatalError(0, 'Socket error where sending message: $ex');
+      _fatalError(new _PgError.client('Socket write error.'));
     }
   }
     
@@ -479,8 +388,10 @@ class _Connection implements Connection {
     if (!_ok && _state != _AUTHENTICATING && _state != _AUTHENTICATED)
       return;
 
-    // Allow socket onData handler to finish after every 100 reads when reading a large amount of data.
-    // also prevents state errors for causing infinite loops.
+    // Allow socket onData handler to finish after every 100 reads when reading
+    // a large amount of data.
+    // TODO make this configurable.
+    // Also prevents errors from causing infinite loops.
     SOCKET_READ: for(int i = 0; i < 100; i++) {
       
       if (r.bytesAvailable > 0)
@@ -488,15 +399,11 @@ class _Connection implements Connection {
       
       r.appendFromSocket(_socket);
       
+      // Debugging
       r._buffer._logState();
       
-      // Wait for more data.
       if (r.bytesAvailable < 5)
-        return;
-      
-      // Debugging
-      //TODO
-      //r._logBufferLayout();
+        return; // Wait for more data.
       
       NEXT_MSG: for(;;) {
 
@@ -507,7 +414,6 @@ class _Connection implements Connection {
         // Make sure there is enough data available to read the message header.
         if (r.bytesAvailable < 5)
           continue SOCKET_READ;
-        
           
         //TODO
         //In authenticating and authenticated state only handle a subset of the message types.
@@ -532,29 +438,25 @@ class _Connection implements Connection {
         
         if (mtype == _MSG_DATA_ROW) { // or a partial message and state is query_reading.
           if (_state != _READY) {
-            _error(0, 'Received DataRow message while not in ready state, state: $_state.');
+            _error(new _PgError.client('Received DataRow message while not in ready state, state: $_state.'));
             r.skipMessage();
-            return;
+            continue NEXT_MSG;
           }
           
           if (r.bytesAvailable < 7)
             continue SOCKET_READ; // Read more data.
 
           _query.onDataRow();
-          
           continue NEXT_MSG;
         }
         
-        if (mtype == _MSG_ERROR_RESPONSE) {
-          //TODO implement me. Read data without buffering it all.
-          //continue NEXT_MSG;
-        } else if (mtype == _MSG_NOTICE_RESPONSE) {
+        if (mtype == _MSG_ERROR_RESPONSE || mtype == _MSG_NOTICE_RESPONSE) {
           //TODO implement me. Read data without buffering it all.
           //continue NEXT_MSG;
         }  
         
         // Currently handled with standard messages.
-        // TODO need to allow large row description messages. Currently this
+        // TODO need to handle large row description messages. Currently this
         // could lead to the buffer growing to a huge size.
         //if (mtype == _MSG_ROW_DESCRIPTION) {
         // continue NEXT_MSG;
@@ -576,16 +478,16 @@ class _Connection implements Connection {
         
         //_log('Read message header, type: ${_itoa(r.messageType)}, code: ${r.messageType}, length: ${r.messageLength}, offset: ${r.messageStart}.');
 
-        // Check for sane message size - need to prevent accidently reading a
-        // massive number of bytes into our buffer.
+        // Check for a sane message size - need to prevent accidently reading a
+        // massive number of bytes into the buffer.
         if (!_checkMessageLength(r.messageType, r.messageLength)) {
-          _fatalError(0, 'Bad message length.'); //FIXME message.
+          _fatalError(new _PgError.client('Bad message length.')); //FIXME message.
           return;
         }
         
         // If only part of a message is left in buffer then read more data.
         // -5 as the header has already been read.
-        if (r.bytesAvailable < r.messageLength + 1 - 5)
+        if (r.bytesAvailable < r.messageLength + 1 - 5) //TODO add r.messageBytesAvailable
           continue SOCKET_READ;
 
         // Dispatch to message handler method.
@@ -597,7 +499,7 @@ class _Connection implements Connection {
         // Note the length reported in the message header excludes the message
         // type byte, hence +1.
         if (r.messageBytesRead != r.messageLength + 1)
-            _error(0, 'Message contents do not agree with length in message header. Message type: ${_itoa(r.messageType)}, bytes read: ${r.messageBytesRead}, message length: ${r.messageLength}.');
+            _error(new _PgError.client('Message contents do not agree with length in message header. Message type: ${_itoa(r.messageType)}, bytes read: ${r.messageBytesRead}, message length: ${r.messageLength}.'));
             
         // Get ready to handle the next message in the buffer.
         // Use the message length information from the header.
@@ -643,11 +545,11 @@ class _Connection implements Connection {
       case _MSG_PARAMETER_DESCRIPTION:
       case _MSG_PARSE_COMPLETE:
       case _MSG_PORTAL_SUSPENDED:
-        _error(0, 'Unimplemented message type: ${_itoa(t)} ${_messageName(t)}.');
+        _error(new _PgError.client('Unimplemented message type: ${_itoa(t)} ${_messageName(t)}.'));
         r.skipMessage();
         break;
       default:
-        _error(0, 'Unknown message type received: ${_itoa(t)} ${_messageName(t)}.');
+        _error(new _PgError.client('Unknown message type received: ${_itoa(t)} ${_messageName(t)}.'));
         r.skipMessage();
         break;
     }
@@ -676,5 +578,11 @@ class _Connection implements Connection {
     }
     return true;
   }
+
 }
 
+String _md5s(String s) {
+  var hash = new MD5();
+  hash.update(s.charCodes());
+  return CryptoUtils.bytesToHex(hash.digest());
+}

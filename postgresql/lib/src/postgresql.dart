@@ -2,26 +2,31 @@
 
 Settings defaultSettings = null;
 
+typedef void ErrorHandler(PgError error);
+
 abstract class Settings {
   
   factory Settings({String host: 'localhost',
                    int port: 5432,
                    String username,
                    String database,
-                   String password}) =>
+                   String password,
+                   ErrorHandler onUnhandledErrorOrNotice}) =>
                        
                        new _Settings(
                            host,
                            port,
                            username,
                            database,
-                           password);
+                           password,
+                           onUnhandledErrorOrNotice);
   String get host;
   int get port;
   String get username;
   String get database;
-  //Map<String,String> params;
+  //TODO Map<String,String> params; 
   String get passwordHash;
+  ErrorHandler get onUnhandledErrorOrNotice;
 }
 
 Future<Connection> connect([Settings settings = null]) {
@@ -41,16 +46,27 @@ abstract class Query extends Stream<Dynamic> {
 }
 
 abstract class ResultMapper {
-  void onRowDescription(List<ColumnDesc> columns);
   void onData(ResultReader r, Streamer streamer);
 }
 
-//TODO remove impl.
-class PgError {
-  final int code;
-  final String message;
-  PgError(this.code, this.message);
-  String toString() => 'Error $code: $message';
+class PgErrorType {
+  const PgErrorType(this.name);
+  final String name;
+  String toString() => name;
+}
+
+const CLIENT_ERROR = const PgErrorType('CLIENT_ERROR');
+const SERVER_ERROR = const PgErrorType('SERVER_ERROR');
+const SERVER_NOTICE = const PgErrorType('SERVER_NOTICE');
+
+abstract class PgError {
+  PgErrorType get type; //FATAL_CLIENT_ERROR, FATAL_SERVER_ERROR, SERVER_ERROR, SERVER_NOTICE
+  String get severity; //FIXME Client errors, report 'ERROR' or 'FATAL??'. Note that notice severities, get translated to the local language.
+  String get code; //SQLSTATE http://www.postgresql.org/docs/8.4/static/errcodes-appendix.html  (Client is supposed to issue these too.)
+  String get message; // One line description.
+  Map<String,String> get fields; // Fields contain all message fields, as sent by the server.
+  String toDetailedMessage();
+  String toString();
 }
 
 class ResultReaderEventType {
@@ -81,7 +97,9 @@ abstract class ResultReader {
   int get row;
   int get column;
   int get columnSizeInBytes;
-  ColumnDesc get columnDesc;  
+  ColumnDesc get columnDesc;
+  List<ColumnDesc> get columnDescs;
+  int get columnCount;
   ResultReaderEventType get event;
   Dynamic get error;
   
