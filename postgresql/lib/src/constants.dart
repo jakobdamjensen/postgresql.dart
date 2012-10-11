@@ -7,8 +7,7 @@ const int OUTPUT_BUFFER_SIZE = SOCKET_WRITE_SIZE;
 
 const int _STATE_MSG_HEADER = 0;
 const int _STATE_COL_HEADER = 1;
-const int _STATE_COL_DATA = 2;
-
+const int _STATE_COL_FRAGMENT = 2;
 
 const _FAILED = const _QueryState('Failed'); // This state isn't really used.
 const _CREATED = const _QueryState('Created');
@@ -32,21 +31,13 @@ const _SOCKET_CONNECTED = const _ConnectionState('Socket connected'); // CONNECT
 const _AUTHENTICATING = const _ConnectionState('Authenticating'); // CONNECTION_AWAITING_RESPONSE
 const _AUTHENTICATED = const _ConnectionState('Authenticated'); // CONNECTION_AUTH_OK
 
-//TODO Do I need this too? static const _CLOSING = const _ConnectionState('Closing');
-
-const _CLOSED = const _ConnectionState('Closed'); // CONNECTION_BAD
-
 // Connected states
 const _IDLE = const _ConnectionState('Idle'); // PGASYNC_IDLE
-
-//FIXME Perhaps these are really just a duplication of the query states?
 const _BUSY = const _ConnectionState('Busy'); // PGASYNC_BUSY //TODO rename to 'waiting for query'?
 const _READY = const _ConnectionState('Ready'); // PGASYNC_READY //TODO rename 'has query result'?
 
-//static const _STREAMING_ERROR_MSG = const _ConnectionState('Streaming error message');
-//static const _STREAMING_ROW_DATA = const _ConnectionState('Streaming row data');
-
-
+// Disconnected state
+const _CLOSED = const _ConnectionState('Closed'); // CONNECTION_BAD
 
 class _ConnectionState {
   final String name;

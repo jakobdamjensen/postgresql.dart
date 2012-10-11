@@ -103,6 +103,7 @@ abstract class ResultReader {
   bool readBool();
   Decimal readDecimal();
   List<int> readBytes();
+  void readBytesInto(Uint8List buffer, int start);
   //TODO Date readDate(); dates and time.
   
   // This can only be called when event == END_COMMAND

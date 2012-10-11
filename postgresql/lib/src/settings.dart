@@ -6,7 +6,7 @@ class _Settings implements Settings {
       this.database,
       //TODO this._params,
       String password,
-      this.onUnhandledError)
+      this.onUnhandledErrorOrNotice)
     : username = username,
       passwordHash = _md5s(password.concat(username));
   
@@ -16,5 +16,5 @@ class _Settings implements Settings {
   final String database;
   //TODO final Map<String,String> _params;
   final String passwordHash;
-  final ErrorHandler onUnhandledError;
+  final ErrorHandler onUnhandledErrorOrNotice;
 }

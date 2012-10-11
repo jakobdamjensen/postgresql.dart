@@ -41,17 +41,12 @@ class _DynamicRowResultMapper implements ResultMapper {
     
     while (r.hasNext()) {
       if (r.event == START_COMMAND) {
-        //FIXME start command is not called yet.
         _columnNames = r.columnDescs.map((c) => c.name);
         
       } else if (r.event == END_COMMAND) {
         //Do nothing
         
       } else if (r.event == START_ROW) {
-        //FIXME temporary until I implement start command.
-        if (_columnNames == null)
-          _columnNames = r.columnDescs.map((c) => c.name);
-        
         _values = new List<Dynamic>(r.columnCount);
         
       } else if (r.event == END_ROW) {

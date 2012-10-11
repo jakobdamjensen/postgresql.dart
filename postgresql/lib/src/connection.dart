@@ -301,52 +301,7 @@ class _Connection implements Connection {
     
     _error(err);
   }
-  
-  //TODO consider writing a parser to handle long row description messages.
-  // As these may be longer than 30k.
-  void _handleRowDescription(_MessageReader r) {
     
-    if (_state != _BUSY) {
-      _error(new _PgError.client('Received RowDescription message while not in busy state, state: $_state.'));
-      r.skipMessage();
-      return;
-    }
-    
-    assert(_query != null);
-    
-    int cols = r.readInt16();
-    assert(cols >= 0);
-    
-    var list = new List<ColumnDesc>(cols);
-    
-    for (int i = 0; i < cols; i++) {      
-      var name = r.readString();
-      int fieldId = r.readInt32();
-      int tableColNo = r.readInt16();
-      int fieldType = r.readInt32();
-      int dataSize = r.readInt16();
-      int typeModifier = r.readInt32();
-      int formatCode = r.readInt16();
-      
-      list[i] = new _ColumnDesc(i, name, fieldId, tableColNo, fieldType, dataSize, typeModifier, formatCode);
-    }
-    
-    _query.onRowDescription(list);
-    
-    _changeState(_READY);
-  }
-  
-  void _handleCommandComplete(_MessageReader r) {
-    if (_state != _READY) {
-      _error(new _PgError.client('Received CommandComplete message while not in ready state, state: $_state.'));
-      r.skipMessage();
-      return;
-    }
-    
-    var commandTag = r.readString();
-    _query.onCommandComplete(commandTag);
-  }
-  
   // Sends a message stored in the output buffer.
   // Note if the socket buffers are full, the message will not be sent
   // immediately (i.e. asynchronously, instead of synchronously as per usual).
@@ -434,9 +389,31 @@ class _Connection implements Connection {
         // separate routine to handle it, as these can handle message fragments
         // and don't require the entire message to be read into the buffer.
         
-        if (mtype == _MSG_DATA_ROW) { // or a partial message and state is query_reading.
+        // A row description message indicates a sequence of data rows is
+        // about to follow. These are handled by the result reader.
+        if (mtype == _MSG_ROW_DESCRIPTION) {
+          if (_state != _BUSY && _state != _READY) {
+            _error(new _PgError.client('Received RowDescription message while not in busy or ready state, state: $_state.'));
+            r.skipMessage();
+            continue NEXT_MSG;
+          }
+          
+          _changeState(_READY);          
+          assert(_query != null);
+          
+          if (r.bytesAvailable < 7)
+            continue SOCKET_READ; // Read more data.
+
+          _query.readResult();
+          continue NEXT_MSG; //FIXME This is broken, sometimes is next message, sometimes should be more data and message header has already been read.
+        }
+        
+        // Note: command complete isn't a large message type, but is
+        // handled by the result reader.
+        if (mtype == _MSG_DATA_ROW || mtype == _MSG_COMMAND_COMPLETE) { //TODO or a partial message and state is query_reading.
+          
           if (_state != _READY) {
-            _error(new _PgError.client('Received DataRow message while not in ready state, state: $_state.'));
+            _error(new _PgError.client('Received ${_messageName(mtype)} message while not in ready state, state: $_state.'));
             r.skipMessage();
             continue NEXT_MSG;
           }
@@ -444,8 +421,8 @@ class _Connection implements Connection {
           if (r.bytesAvailable < 7)
             continue SOCKET_READ; // Read more data.
 
-          _query.onDataRow();
-          continue NEXT_MSG;
+          _query.readResult();
+          continue NEXT_MSG; //FIXME This is broken, sometimes is next message, sometimes should be more data and message header has already been read.
         }
         
         // Currently handled with standard messages.
@@ -517,7 +494,6 @@ class _Connection implements Connection {
     
     switch (t) {
       case _MSG_AUTH_REQUEST: _handleAuthenticationRequest(r); break;
-      case _MSG_COMMAND_COMPLETE: _handleCommandComplete(r); break;
       case _MSG_READY_FOR_QUERY: _handleReadyForQuery(r); break;
       case _MSG_ROW_DESCRIPTION: _handleRowDescription(r); break;
       
@@ -529,7 +505,7 @@ class _Connection implements Connection {
         //_log('Ignoring unimplemented message type: ${_itoa(t)} ${_messageName(t)}.');
         r.skipMessage();
         break;
-
+        
       case _MSG_NOTIFICATION_RESPONSE:
       case _MSG_BIND:
       case _MSG_BIND_COMPLETE:
@@ -550,6 +526,14 @@ class _Connection implements Connection {
         _error(new _PgError.client('Unimplemented message type: ${_itoa(t)} ${_messageName(t)}.'));
         r.skipMessage();
         break;
+  
+      // These are handled by the ResultReader class.
+      case _MSG_DATA_ROW:
+      case _MSG_COMMAND_COMPLETE:
+        _error(new _PgError.client('Unexpected message type: ${_itoa(t)} ${_messageName(t)}.'));
+        r.skipMessage();
+        break;
+        
       default:
         _error(new _PgError.client('Unknown message type received: ${_itoa(t)} ${_messageName(t)}.'));
         r.skipMessage();

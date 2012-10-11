@@ -7,7 +7,7 @@ void main() {
   pg.connect(s)
   ..then((c) {
     print('connected...');
-    runExampleQuery(c);
+    runMultiQuery(c);
   })
   ..handleException((e) {
     print('Exception: $e');
@@ -60,4 +60,18 @@ void runExampleQueries(pg.Connection c) {
     return true;
   });
   
+}
+
+void runMultiQuery(pg.Connection c) {
+  var sql = 'select 1 as one, \'2\' as two, 3.1 as three;'
+      ' select 1 as one, \'2\' as two, 3.1 as three;';
+  
+  c.query(sql).all()
+    ..then((result) {
+      print(result);
+    })
+    ..handleException((err) {
+      print(err);
+      return true;
+    });
 }
