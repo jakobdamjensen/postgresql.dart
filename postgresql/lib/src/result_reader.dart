@@ -1,5 +1,5 @@
 
-class _ResultReader implements ResultReader, ZeroCopyResultReader {
+class _ResultReader implements ResultReader {
   
   _ResultReader(this._msgReader);
   
@@ -7,18 +7,20 @@ class _ResultReader implements ResultReader, ZeroCopyResultReader {
   final _MessageReader _msgReader;
   
   ResultReaderEventType _event;
-  int _command;
+  int _command = 0;
   int _row = -1;
   int _column = -1;
   int _colSize;
-  
-  Dynamic _error;
   
   int _msgType;
   int _msgLength;
   int _colCount;
   
+  ResultReaderEventType get event => _event;
   List<ColumnDesc> columnDescs;
+  
+  //TODO This can only be accessed when event == END_COMMAND
+  String commandTag;
   
   int get command => _command;
   int get row => _row;
@@ -26,12 +28,21 @@ class _ResultReader implements ResultReader, ZeroCopyResultReader {
   int get columnSizeInBytes => _colSize;
   ColumnDesc get columnDesc => columnDescs[column];
   int get columnCount => columnDescs.length;
-  ResultReaderEventType get event => _event;
-  Dynamic get error => _error;
+  
+  // Called after each command complete message.
+  void onCommandComplete(String commandTag) {
+  //  this.commandTag = commandTag;
+  //  _command++;
+  //  _row = -1;
+  //  _column = -1;
+  }
   
   //TODO emit START/END_COMMAND events.
   // Read another value if there is one in the buffer.
   bool hasNext() {
+    //if (commandTag != null)
+    //  return END_COMMAND;
+    
     switch (_state) {
       case _STATE_MSG_HEADER: return _hasNextMsgHeader();
       case _STATE_COL_HEADER: return _hasNextColHeader();
@@ -126,69 +137,52 @@ class _ResultReader implements ResultReader, ZeroCopyResultReader {
   // don't end up losing sync with the data stream.
   
   //TODO Encode based on default mapping using type oid in row description.
-  Dynamic get value => asString();
+  Dynamic readDynamic() => readString();
   
-  List<int> asBytes() { 
+  List<int> readBytes() { 
     if (event != COLUMN_DATA)
-      throw new Exception('ResultReader.asBytes() called in invalid state, event: $event.');
+      throw new Exception('ResultReader.readBytes() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
     return decodeBytes(columnDesc, colData, 0, colData.length);
   }
   
-  String asString() {
+  String readString() {
     if (event != COLUMN_DATA)
-      throw new Exception('ResultReader.asString() called in invalid state, event: $event.');
+      throw new Exception('ResultReader.readString() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
     return decodeString(columnDesc, colData, 0, colData.length);
   }
   
-  int asInt() { 
+  int readInt() { 
     if (event != COLUMN_DATA)
-      throw new Exception('ResultReader.asInt() called in invalid state, event: $event.');
+      throw new Exception('ResultReader.readInt() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
     return decodeInt(columnDesc, colData, 0, colData.length);    
   }
   
-  bool asBool() {
+  bool readBool() {
     if (event != COLUMN_DATA)
-      throw new Exception('ResultReader.asBool() called in invalid state, event: $event.');
+      throw new Exception('ResultReader.readBool() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
     return decodeBool(columnDesc, colData, 0, colData.length);    
   }
 
-  Decimal asDecimal() {
+  Decimal readDecimal() {
     if (event != COLUMN_DATA)
-      throw new Exception('ResultReader.asDecimal() called in invalid state, event: $event.');
+      throw new Exception('ResultReader.readDecimal() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
     return decodeDecimal(columnDesc, colData, 0, colData.length);    
   }
   
-  // This can only be called when event == END_COMMAND
-  //TODO parse this and return meaning result.
-  String get commandTag() { throw new Exception('Not implemented.'); }
-
-  //TODO implment ZeroCopyResultReader interface.
-  // These can only be called when event == COLUMN_DATA_FRAGMENT
-  //Uint8List get fragment;
-  //int get fragmentOffset;
-  //int get fragmentLength;
-  
-  //Uint8List get fragment2;
-  //int get fragment2Offset;
-  //int get fragment2Length;
-  
-  //void readString(void callback(String s));
-  
-  //InputStream asInputStream();
 
 }

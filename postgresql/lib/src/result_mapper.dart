@@ -1,6 +1,6 @@
 
-class _Row {
-  _Row(this._columnNames, this._values) {
+class _DynamicRow {
+  _DynamicRow(this._columnNames, this._values) {
     //assert(this._columnNames.length == this._values.length);
   }
   
@@ -31,35 +31,36 @@ class _Row {
   String toString() => _values.toString();
 }
 
-class _DefaultResultMapper implements ResultMapper {
+class _DynamicRowResultMapper implements ResultMapper {
   
-  _Row _row;
+  _DynamicRow _row;
   List<String> _columnNames;
   List<Dynamic> _values;
   
   void onData(ResultReader r, Streamer streamer) {
     
     while (r.hasNext()) {
-      if (r.event == ERROR) {
-        if (!streamer.future.isComplete)
-          streamer.completeException(r.error); //TODO Only first error is sent. Check that this matches protocol description.
-      
+      if (r.event == START_COMMAND) {
+        //FIXME start command is not called yet.
+        _columnNames = r.columnDescs.map((c) => c.name);
+        
+      } else if (r.event == END_COMMAND) {
+        //Do nothing
+        
       } else if (r.event == START_ROW) {
         //FIXME temporary until I implement start command.
         if (_columnNames == null)
           _columnNames = r.columnDescs.map((c) => c.name);
         
         _values = new List<Dynamic>(r.columnCount);
+        
       } else if (r.event == END_ROW) {
-        var row = new _Row(_columnNames, _values);
+        var row = new _DynamicRow(_columnNames, _values);
         streamer.send(row);
+        
       } else if (r.event == COLUMN_DATA) {
-        _values[r.column] = r.value;
-      } else if (r.event == START_COMMAND) {
-        //FIXME start command is not called yet.
-        _columnNames = r.columnDescs.map((c) => c.name);
-      } else if (r.event == END_COMMAND) {
-        //Do nothing
+        _values[r.column] = r.readDynamic();
+        
       } else {
         assert(false);
       }

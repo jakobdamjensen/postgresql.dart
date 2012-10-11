@@ -136,7 +136,7 @@ class _Connection implements Connection {
     _changeState(_AUTHENTICATING);
   }
   
-  Query query(String sql, {int timeoutMillis, Object resultType, ResultMapper resultMapper}) {
+  Query query(String sql, {int timeoutMillis, ResultMapper resultMapper}) {
 
     if (sql == null || sql == '')
       throw new Exception('Sql is null or empty.');
@@ -145,15 +145,8 @@ class _Connection implements Connection {
     if (timeoutMillis != null)
       throw new Exception('Query timeout not implemented.');
     
-    //TODO
-    if (resultType != null)
-      throw new Exception('Result type mapping not implemented.');
-    
-    if (resultMapper != null && resultType != null)
-      throw new Exception('Query() can take a resultReader, or a resultType, but not both.');
-    
     if (resultMapper == null)
-      resultMapper = new _DefaultResultMapper(); 
+      resultMapper = new _DynamicRowResultMapper(); 
     
     if (!_ok)
       throw new Exception('Attempted a query on a closed connection.');
@@ -350,11 +343,8 @@ class _Connection implements Connection {
       return;
     }
     
-    //TODO store this information in _query.
-    var commandTag = r.readString();    
-    
-    //FIXME
-    //_query.handleCommandComplete(commandTag);
+    var commandTag = r.readString();
+    _query.onCommandComplete(commandTag);
   }
   
   // Sends a message stored in the output buffer.

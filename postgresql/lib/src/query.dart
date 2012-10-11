@@ -29,6 +29,10 @@ class _Query implements Query {
     _resultMapper.onData(_resultReader, _streamer);
   }
   
+  void onCommandComplete(String commandTag) {
+    _resultReader.onCommandComplete(commandTag);
+  }
+  
   void onQueryComplete() {
     if (!_streamer.future.isComplete) {      
       if (_error == null) {

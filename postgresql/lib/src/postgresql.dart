@@ -36,7 +36,7 @@ Future<Connection> connect([Settings settings = null]) {
 abstract class Connection {
   //TODO Future<int> exec(String sql);
   //TODO ConnectionState get state;
-  Query query(String sql, {int timeoutMillis, Object resultType, ResultMapper resultMapper});
+  Query query(String sql, {int timeoutMillis, ResultMapper resultMapper});
   void close();
 }
 
@@ -80,18 +80,13 @@ const END_ROW = const ResultReaderEventType('end-row');
 const START_COMMAND = const ResultReaderEventType('start-command');
 const END_COMMAND = const ResultReaderEventType('end-command');
 const COLUMN_DATA = const ResultReaderEventType('column-data');
-const ERROR = const ResultReaderEventType('error');
-
-// Usefull?
-//const BUFFER_FULL = const ResultReaderEventType('buffer-full');
-//const BUFFER_EMPTY = const ResultReaderEventType('buffer-empty');
-
-// This is only returned when using zero copy.
 const COLUMN_DATA_FRAGMENT = const ResultReaderEventType('column-data-fragment');
 
 abstract class ResultReader {
 
   bool hasNext();  
+  
+  ResultReaderEventType get event;
   
   int get command;
   int get row;
@@ -99,37 +94,30 @@ abstract class ResultReader {
   int get columnSizeInBytes;
   ColumnDesc get columnDesc;
   List<ColumnDesc> get columnDescs;
-  int get columnCount;
-  ResultReaderEventType get event;
-  Dynamic get error;
+  int get columnCount; // Number of columns in the row.
   
   // These can only be called when event == COLUMN_DATA
-  Dynamic get value; // Encode based on default mapping.
-  
-  String asString();
-  int asInt();
-  bool asBool();
-  Decimal asDecimal();
-  List<int> asBytes();
+  Dynamic readDynamic(); // Encode based on default mapping.
+  String readString(); //TODO use default string encoding.
+  int readInt();
+  bool readBool();
+  Decimal readDecimal();
+  List<int> readBytes();
+  //TODO Date readDate(); dates and time.
   
   // This can only be called when event == END_COMMAND
   //TODO parse this and return meaning result.
   String get commandTag;
-}
-
-abstract class ZeroCopyResultReader implements ResultReader {
+  
   // These can only be called when event == COLUMN_DATA_FRAGMENT
-  Uint8List get fragment;
-  int get fragmentOffset;
-  int get fragmentLength;
+  // Or COLUMN_DATA too??
+  int get fragmentSizeInBytes;
   
-  Uint8List get fragment2;
-  int get fragment2Offset;
-  int get fragment2Length;
+  // Returns true if there is still more data fragments to read.
+  bool readStringFragment(StringBuffer buffer);
   
-  void readString(void callback(String s));
-  
-  InputStream asInputStream();
+  // Returns true if there are still more data fragments to read.
+  bool readBytesFragment(Uint8List buffer, int start);
 }
 
 abstract class Stream<T> implements Future<Dynamic> {  
