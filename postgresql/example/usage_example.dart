@@ -7,7 +7,7 @@ void main() {
   pg.connect(s)
   ..then((c) {
     print('connected...');
-    runMultiQuery(c);
+    runExampleQueryBad(c);
   })
   ..handleException((e) {
     print('Exception: $e');
@@ -40,6 +40,10 @@ void runExampleQueryBad(pg.Connection c) {
     })
     ..handleException((err) {
       print(err);
+      
+      // Check that state is still OK by running another query.
+      runExampleQuery(c);
+      
       return true;
     });
 }

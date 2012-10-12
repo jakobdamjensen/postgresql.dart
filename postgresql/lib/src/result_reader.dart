@@ -1,4 +1,21 @@
 
+// Reads a result sequence of a query. A result sequence is:
+// (RowDescription, DataRow*, CommandComplete)* ReadyForQuery
+
+// ReadyForQuery is handled in the connection main loop. This class handles
+// the rest of the sequence.
+
+// An ErrorResponse could happen at any time, this stops any more results from
+// being processed, and will be followed by a ReadyForQuery.
+
+// NoticeResponses message can happen at anytime and will be handled by the
+// main loop.
+
+//TODO CopyInResponse and CopyOutResponse are not yet implemented.
+
+// See Postgresql docs 4.6.2.2 Simple Query 
+// http://www.postgresql.org/docs/9.2/static/protocol-flow.html
+
 class _ResultReader implements ResultReader {
   
   _ResultReader(this._msgReader) {
@@ -32,17 +49,23 @@ class _ResultReader implements ResultReader {
   // to read, i.e. no more events, then return false.
   bool hasNext() {
     
+    if (_msgReader.state == _MESSAGE_HEADER) {
+      if (_msgReader.bytesAvailable < 5)
+        return false;
+      
+      _msgReader.startMessage();
+    }
+    
     switch (_state) {
         
       case _STATE_MSG_HEADER:
-        var mtype = _msgReader.peekByte();
-        if (mtype == _MSG_COMMAND_COMPLETE) {
+        if (_msgReader.messageType == _MSG_COMMAND_COMPLETE) {
           return _parseCommandComplete();
           
-        } else if (mtype == _MSG_ROW_DESCRIPTION) {
+        } else if (_msgReader.messageType == _MSG_ROW_DESCRIPTION) {
           return _parseRowDescription();
           
-        } else if (mtype == _MSG_DATA_ROW) {
+        } else if (_msgReader.messageType == _MSG_DATA_ROW) {
           return _parseDataRow();
         }
         return false; // Bail out to the main loop and handle the message there.
@@ -63,14 +86,13 @@ class _ResultReader implements ResultReader {
     
     var r = _msgReader;
     
-    // If there's not enough data to read the data row header then bail out and 
-    // wait for more data to arrive.
-    if (r.bytesAvailable < 7)
-      return false;
-    
-    r.startMessage();
     assert(r.messageType == _MSG_DATA_ROW);
     assert(r.messageLength >= 6);
+    
+    // If there's not enough data to read the data row header then bail out and 
+    // wait for more data to arrive.
+    if (r.bytesAvailable < 2)
+      return false;
     
     _colCount = r.readInt16();
     
@@ -90,10 +112,10 @@ class _ResultReader implements ResultReader {
   bool _parseColHeader() {
     assert(_state == _STATE_COL_HEADER);
     
-    if (_column + 1 >= _colCount) {      
-      _column = -1;
-      _event = END_ROW;
-      _state = _STATE_MSG_HEADER;
+    var r = _msgReader;
+    
+    if (_column + 1 >= _colCount) {
+      
       //TODO check message length and bytes read match.
       //TODO figure out how to do error handling at this level.
       // Note the length reported in the message header excludes the message
@@ -102,14 +124,22 @@ class _ResultReader implements ResultReader {
       //  _error(new _PgError.client('Message contents do not agree with length in message header. Message type: ${_itoa(r.messageType)}, bytes read: ${r.messageBytesRead}, message length: ${r.messageLength}.'));
       //  r.skipMessage();
       //}
+      
+      if (r.messageBytesRemaining != 0)
+        throw new Exception('Lost sync.');
+      
+      r.endMessage();
+      
+      _column = -1;
+      _event = END_ROW;
+      _state = _STATE_MSG_HEADER;
+      
       return true;
     }
     
-    var r = _msgReader;
-    
     // Check there's enough data to read the header, otherwise bail out and read
     // more data.
-    if (r.bytesAvailable < 5)
+    if (r.bytesAvailable < 4)
       return false;
     
     _colSize = r.readInt32();
@@ -124,7 +154,7 @@ class _ResultReader implements ResultReader {
     if (_colSize > r.contiguousBytesAvailable) {
       print('Data fragment, column size: $_colSize, bytes available in buffer: ${r.contiguousBytesAvailable}.');      
       _event = COLUMN_DATA_FRAGMENT;
-      _state = _STATE_COL_DATA;
+      _state = _STATE_COL_FRAGMENT;
       return true;
     }
     
@@ -136,9 +166,16 @@ class _ResultReader implements ResultReader {
   bool _parseColFragment() {
     throw new Exception('Column data fragments not implemented.');
     
+    if (_msgReader.bytesAvailable < 1)
+      return false;
+    
     assert(_state == _STATE_COL_FRAGMENT);
     
     // Continue reading data in the buffer.
+    //TODO set some index positions. so we know where this fragment should go.
+    _event = COLUMN_DATA_FRAGMENT;
+    _state = _STATE_COL_FRAGMENT;
+    return true;
   }
   
   //TODO consider writing a parser to handle long row description messages.
@@ -147,12 +184,10 @@ class _ResultReader implements ResultReader {
     
     var r = _msgReader;    
     
-    //FIXME check there is enough data to continue. otherwise read more.
-    r.startMessage();
+    assert(r.messageType == _MSG_ROW_DESCRIPTION);
     
-    if (r.bytesAvailable < r.messageLength + 1 - 5) { //TODO add r.messageBytesAvailable
-      return false;
-    }
+    if (r.isMessageFragment)
+      return false; //FIXME Read more data. need to tell the connection that there is a message fragment.
     
     int cols = r.readInt16();
     
@@ -172,6 +207,17 @@ class _ResultReader implements ResultReader {
       
       list[i] = new _ColumnDesc(i, name, fieldId, tableColNo, fieldType, dataSize, typeModifier, formatCode);
     }
+
+    //TODO check message length and bytes read match.
+    //TODO figure out how to do error handling at this level.
+    //if (r.messageBytesAvailable != 0) {
+    //  _error(new _PgError.client('Message contents do not agree with length in message header. Message type: ${_itoa(r.messageType)}, bytes read: ${r.messageBytesRead}, message length: ${r.messageLength}.'));
+    //  r.skipMessage();
+    //}
+    if (r.messageBytesRemaining != 0)
+      throw new Exception('Lost sync.');
+    
+    r.endMessage();
     
     _columnDescs = list;
     
@@ -186,28 +232,26 @@ class _ResultReader implements ResultReader {
   
   bool _parseCommandComplete() {
     var r = _msgReader;
-    
-    assert(r.peekByte() == _MSG_COMMAND_COMPLETE);
+    assert(r.messageType == _MSG_COMMAND_COMPLETE);
     
     _event = END_COMMAND;
-    r.startMessage();
     
-    //FIXME handle message fragment - wait for more data. Does this work?
-    //TODO put this logic into a getter, so I don't have to think
-    // i.e. !r.completeMessageInBuffer
-    if (r.bytesAvailable < r.messageLength - 4)
+    if (r.isMessageFragment)
       return false; //FIXME Read more data. need to tell the connection that there is a message fragment.
     
     _commandTag = r.readString();
     
     //TODO check message length and bytes read match.
     //TODO figure out how to do error handling at this level.
-    // Note the length reported in the message header excludes the message
-    // type byte, hence +1.
-    //if (r.messageBytesRead != r.messageLength + 1) {
+    //if (r.messageBytesAvailable != 0) {
     //  _error(new _PgError.client('Message contents do not agree with length in message header. Message type: ${_itoa(r.messageType)}, bytes read: ${r.messageBytesRead}, message length: ${r.messageLength}.'));
     //  r.skipMessage();
     //}
+    if (r.messageBytesRemaining != 0)
+      throw new Exception('Lost sync.');
+    
+    r.endMessage();
+    
     return true;
   }
   

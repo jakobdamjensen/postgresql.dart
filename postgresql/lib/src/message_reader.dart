@@ -1,29 +1,44 @@
 
+const int _MESSAGE_HEADER = 0;
+const int _MESSAGE_BODY = 1;
+const int _MESSAGE_WITHIN_BODY = 2;
+
 class _MessageReader {
   
   _MessageReader(int readSize, int initialBlocks) 
       : _readSize = readSize,
-        _buffer = new _CircularBlockBuffer(readSize, initialBlocks);
+        _buffer = new _CircularBlockBuffer(readSize, initialBlocks),
+        _state = _MESSAGE_HEADER;
 //          _buffer = new _SimpleBuffer(65535);
   
   final int _readSize;
   final _CircularBlockBuffer _buffer;
   //final _SimpleBuffer _buffer;
   
+  int _state;
   int _msgType;
   int _msgLength; // Note the +1 issue.
   int _msgStart; // The position where startMessage was last called.
-  int _msgEnd;
+  
+  int get state() {
+    if (_state == _MESSAGE_BODY && index > _msgStart + 5)
+      return _MESSAGE_WITHIN_BODY;
+    else
+      return _state;
+  } 
   
   int get index => _buffer.index;
   int get bytesAvailable => _buffer.bytesAvailable;
   int get contiguousBytesAvailable => _buffer.contiguousBytesAvailable;
 
   int get messageType => _msgType;
-  int get messageLength => _msgLength;
-  int get messageStart => _msgStart;
+  int get messageLength => _msgLength; // The message length reported in the header, note this doesn't include the message type byte.
+  int get messageStart => _msgStart; // The index in the buffer where the message started, i.e. the index of the message type byte.
+  int get messageEnd => _msgStart + _msgLength + 1;
+  int get messageBytesRead => index - _msgStart; // Note includes message type byte. So after reading a message messageBytesRead == messageLength + 1.
+  int get messageBytesRemaining => messageEnd - index;
   
-  int get messageBytesRead => index - _msgStart;
+  bool get isMessageFragment => messageBytesRemaining > bytesAvailable;
   
   void _log(String msg) => print('MessageReader: $msg');
   
@@ -31,8 +46,9 @@ class _MessageReader {
     _buffer._logState();
   }
   
-  void appendFromSocket(Socket _socket) {
-    _buffer.appendFromSocket(_socket, _readSize);
+  //TODO remove this, let connection append directly to the buffer.
+  int appendFromSocket(Socket _socket) {
+    return _buffer.appendFromSocket(_socket, _readSize);
     
 // Print debugging info
 //    int i = _buffer.block.start;
@@ -161,12 +177,21 @@ class _MessageReader {
   }
   
   void startMessage() {
+    assert(_state == _MESSAGE_HEADER);
+    _state = _MESSAGE_BODY;
     _msgStart = index;
     _msgType = readByte();
     _msgLength = readInt32();
   }
   
+  void endMessage() {
+    _state = _MESSAGE_HEADER;
+    assert(messageBytesRemaining == 0);
+  }
+  
+  // Can only skip messages which have been entirely read into the buffer.
   void skipMessage() {
+    _state = _MESSAGE_HEADER;
     assert(_msgType > 0);
     assert(_msgLength > 0);
     int endIndex = _msgStart + _msgLength + 1;
@@ -177,48 +202,48 @@ class _MessageReader {
   }
 
   //TODO implement me.
-  String readString_v2() {
-    
-    String readStringFromCurrentBlock() {
-      int c;
-      int start = _buffer.block.start;
-      while (_buffer.block.start < _buffer.block.end) {
-        c = _buffer.block.list[_buffer.block.start];
-        if (c == 0)
-          break;
-        _buffer.block.start++;
-      }
-      
-      if (_buffer.block.end - start == 0)
-        return '';
-      
-      //FIXME Yuck there must be a better way.
-      // Also need to check what sort of character encoding that postgresql uses.
-      var list = new Uint8List.view(_buffer.block.list.asByteArray(start, _buffer.block.start - start));
-      return new String.fromCharCodes(list);
-    }
-    
-    var s = readStringFromCurrentBlock();
-    
-    if (peekByte() == 0) {
-      readByte();
-      return s;
-    }
-    
-    // If the string spans at least two blocks then continue reading.
-    var sb = new StringBuffer(s);
-    
-    for(;;) {
-      sb.add(readStringFromCurrentBlock());
-      if (peekByte() == 0) {
-        readByte();
-        return sb.toString();
-      }
-    }
-    
-    // Make sure that we don't wind up in an infinite loop.
-    //TODO perhaps add an optional max string size configuration setting.
-    if (index > _msgEnd)
-      throw new Exception('Read string didn\'t find a null terminator in the message.');
-  }
+//  String readString_v2() {
+//    
+//    String readStringFromCurrentBlock() {
+//      int c;
+//      int start = _buffer.block.start;
+//      while (_buffer.block.start < _buffer.block.end) {
+//        c = _buffer.block.list[_buffer.block.start];
+//        if (c == 0)
+//          break;
+//        _buffer.block.start++;
+//      }
+//      
+//      if (_buffer.block.end - start == 0)
+//        return '';
+//      
+//      //FIXME Yuck there must be a better way.
+//      // Also need to check what sort of character encoding that postgresql uses.
+//      var list = new Uint8List.view(_buffer.block.list.asByteArray(start, _buffer.block.start - start));
+//      return new String.fromCharCodes(list);
+//    }
+//    
+//    var s = readStringFromCurrentBlock();
+//    
+//    if (peekByte() == 0) {
+//      readByte();
+//      return s;
+//    }
+//    
+//    // If the string spans at least two blocks then continue reading.
+//    var sb = new StringBuffer(s);
+//    
+//    for(;;) {
+//      sb.add(readStringFromCurrentBlock());
+//      if (peekByte() == 0) {
+//        readByte();
+//        return sb.toString();
+//      }
+//    }
+//    
+//    // Make sure that we don't wind up in an infinite loop.
+//    //TODO perhaps add an optional max string size configuration setting.
+//    //if (index > _msgEnd)
+//      //throw new Exception('Read string didn\'t find a null terminator in the message.');
+//  }
 }

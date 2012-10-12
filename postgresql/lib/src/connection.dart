@@ -59,8 +59,8 @@ class _Connection implements Connection {
         && err.type != SERVER_NOTICE) {
       
       assert(_query != null);
-      _query.changeState(_COMPLETE);
-      _query._streamer.completeException(err);
+      _changeState(_READY);
+      _query.completeException(err);
       
     } else {
       if (settings.onUnhandledErrorOrNotice != null)
@@ -235,7 +235,7 @@ class _Connection implements Connection {
     if (_state != _READY && _state != _AUTHENTICATED) {
       _fatalError(new _PgError.client('Received ReadyForQuery message from server while in invalid state: $_state.'));
       return;
-    } 
+    }
     
     int c = r.readByte();
     
@@ -260,7 +260,7 @@ class _Connection implements Connection {
       if (!_connectCompleter.future.isComplete)
         _connectCompleter.complete(this);
     } else {
-      q.onQueryComplete();
+      q.complete();
       _processSendQueryQueue();
     }
   }
@@ -324,32 +324,56 @@ class _Connection implements Connection {
     } catch (ex) {
       _fatalError(new _PgError.client('Socket write error.'));
     }
-  }
-    
+  }    
+
   void _readData() {
 
-    var r = _reader;
-    
-    // Check to see if the connection is in a valid reading state.
-    if (!_ok && _state != _AUTHENTICATING && _state != _AUTHENTICATED)
-      return;
-
     // Allow socket onData handler to finish after every 100 reads when reading
-    // a large amount of data.
+    // a large amount of data. This make sure an isolate doesn't get to greedy
+    // and hog a thread. Returning back will allow the scheduler to reschedule.
     // TODO make this configurable.
-    // Also prevents errors from causing infinite loops.
     SOCKET_READ: for(int i = 0; i < 100; i++) {
-      
-      if (r.bytesAvailable > 0)
-        _log('Message fragment left in buffer - bytesAvailable: ${r.bytesAvailable}.');
-      
-      r.appendFromSocket(_socket);
-      
+    
+      // The reader could be one of the following states:
+      //  -- buffer is empty
+      //  -- buffer has data and the:
+      //      -- reader is at a message header position
+      //      -- reader is at a message body start position
+      //      -- reader is within a message body, at some offset
+    
+      // Check to see if the connection is in a valid reading state.
+      if (!_ok && _state != _AUTHENTICATING && _state != _AUTHENTICATED)
+        return;
+    
+      int bytesRead = _reader.appendFromSocket(_socket);
+    
+      if (bytesRead == 0)
+        return;
+
       // Debugging
-      r._buffer._logState();
+      _reader._buffer._logState();
       
-      if (r.bytesAvailable < 5)
-        return; // Wait for more data.
+      if (_reader.state == _MESSAGE_WITHIN_BODY) {
+        // This can only happen for types which can be processed in fragments
+        // without requiring the entire message being read into the buffer.
+        //TODO At the moment this can only happen for DataRow messages.
+        
+        if ((_state != _BUSY && _state != _READY)
+            || _reader.messageType != _MSG_DATA_ROW) {
+          _fatalError(new _PgError.client('Lost sync.')); //TODO message
+        }
+        
+        assert(_query != null);
+        _query.readResult();
+        
+        if (_reader.state == _MESSAGE_HEADER || _reader.state == _MESSAGE_BODY) {
+          // Fallthrough - i.e. continue NEXT_MSG;
+        } else if (_reader.state == _MESSAGE_WITHIN_BODY) {
+          continue SOCKET_READ;
+        } else {
+          assert(false);
+        }
+      }
       
       NEXT_MSG: for(;;) {
 
@@ -357,17 +381,24 @@ class _Connection implements Connection {
         if (!_ok && _state != _AUTHENTICATING && _state != _AUTHENTICATED)
           return;
         
-        // Make sure there is enough data available to read the message header.
-        if (r.bytesAvailable < 5)
-          continue SOCKET_READ;
+        if (_reader.state == _MESSAGE_HEADER) {
+          if (_reader.bytesAvailable < 5)
+            continue SOCKET_READ;
+      
+          _reader.startMessage();
+        }
         
-        // Peek at the message type.
-        int mtype = r.peekByte();
-        
+        print('state: ${_reader.state}, index: ${_reader.index}, _msgStart: ${_reader._msgStart}');
+        assert(_reader.state == _MESSAGE_BODY);
+
+        if (!_checkMessageLength(_reader.messageType, _reader.messageLength)) {
+          _fatalError(new _PgError.client('Lost sync.'));
+        }
+
         // In authenticating state only handle a subset of the message types.
         if (_state == _AUTHENTICATING
-            && mtype != _MSG_AUTH_REQUEST
-            && mtype != _MSG_ERROR_RESPONSE) {
+            && _reader.messageType != _MSG_AUTH_REQUEST
+            && _reader.messageType != _MSG_ERROR_RESPONSE) {
           
           _fatalError(new _PgError.client('Unexpected message type. Are you sure you connect to a postgresql database? MsgType: \'${_itoa(mtype)}\'.'));
           return;
@@ -375,117 +406,74 @@ class _Connection implements Connection {
           
         // In authenticated state only handle a subset of the message types.
         if (_state == _AUTHENTICATED
-            && mtype != _MSG_BACKEND_KEY_DATA 
-            && mtype != _MSG_PARAMETER_STATUS
-            && mtype != _MSG_READY_FOR_QUERY
-            && mtype != _MSG_ERROR_RESPONSE
-            && mtype != _MSG_NOTICE_RESPONSE) {
+            && _reader.messageType != _MSG_BACKEND_KEY_DATA 
+            && _reader.messageType != _MSG_PARAMETER_STATUS
+            && _reader.messageType != _MSG_READY_FOR_QUERY
+            && _reader.messageType != _MSG_ERROR_RESPONSE
+            && _reader.messageType != _MSG_NOTICE_RESPONSE) {
             
           _fatalError(new _PgError.client('Unexpected message type while in authenticated state: ${_itoa(mtype)}.'));
           return;
         }
 
-        // If it's a large message type, then we'll need to hand over to a
-        // separate routine to handle it, as these can handle message fragments
-        // and don't require the entire message to be read into the buffer.
+        // Large message types - these may be more than 30k. Ideally they 
+        // should be read by a streaming parser, so that the buffer doesn't
+        // need to grow to accomodate them. Currently only DataRow messages are
+        // read with a streaming parser.
         
-        // A row description message indicates a sequence of data rows is
-        // about to follow. These are handled by the result reader.
-        if (mtype == _MSG_ROW_DESCRIPTION) {
-          if (_state != _BUSY && _state != _READY) {
-            _error(new _PgError.client('Received RowDescription message while not in busy or ready state, state: $_state.'));
-            r.skipMessage();
-            continue NEXT_MSG;
-          }
+        // Large message types:
+        //   _MSG_NOTICE_RESPONSE
+        //   _MSG_ERROR_RESPONSE
+        //   _MSG_FUNCTION_CALL_RESPONSE
+        //   _MSG_NOTIFICATION_RESPONSE
+        //   _MSG_COPY_DATA
+        //   _MSG_ROW_DESCRIPTION
+        //   _MSG_DATA_ROW.
+        
+        // These mesage types are handled by the ResultReader class.
+        //TODO handle empty query response.
+        if (_reader.messageType == _MSG_ROW_DESCRIPTION
+            || _reader.messageType == _MSG_DATA_ROW
+            || _reader.messageType == _MSG_COMMAND_COMPLETE) {
           
-          _changeState(_READY);          
-          assert(_query != null);
+          if (_state == _BUSY)
+            _changeState(_READY);
           
-          if (r.bytesAvailable < 7)
-            continue SOCKET_READ; // Read more data.
-
+          if (_state != _READY)
+            _fatalError(new _PgError.client('Lost sync.')); //TODO message
+          
           _query.readResult();
-          continue NEXT_MSG; //FIXME This is broken, sometimes is next message, sometimes should be more data and message header has already been read.
-        }
-        
-        // Note: command complete isn't a large message type, but is
-        // handled by the result reader.
-        if (mtype == _MSG_DATA_ROW || mtype == _MSG_COMMAND_COMPLETE) { //TODO or a partial message and state is query_reading.
           
-          if (_state != _READY) {
-            _error(new _PgError.client('Received ${_messageName(mtype)} message while not in ready state, state: $_state.'));
-            r.skipMessage();
+          if (_reader.state == _MESSAGE_HEADER || _reader.state == _MESSAGE_BODY)
             continue NEXT_MSG;
-          }
-          
-          if (r.bytesAvailable < 7)
-            continue SOCKET_READ; // Read more data.
-
-          _query.readResult();
-          continue NEXT_MSG; //FIXME This is broken, sometimes is next message, sometimes should be more data and message header has already been read.
+          else if (_reader.state == _MESSAGE_WITHIN_BODY)
+            continue SOCKET_READ;
+          else
+            assert(false);
         }
         
-        // Currently handled with standard messages.
-        //TODO implement me. Read data without buffering it all.
-        //if (mtype == _MSG_ERROR_RESPONSE || mtype == _MSG_NOTICE_RESPONSE) {
-          // Hand over to fragment reader.
-          //continue NEXT_MSG;
-        //}  
-        
-        // Currently handled with standard messages.
-        // TODO need to handle large row description messages. Currently this
-        // could lead to the buffer growing to a huge size.
-        //if (mtype == _MSG_ROW_DESCRIPTION) {
-        // continue NEXT_MSG;
-        //}
-        
-        //if (mtype == _MSG_FUNCTION_CALL_RESPONSE
-        //         || mtype == _MSG_NOTIFICATION_RESPONSE
-        //         || mtype == _MSG_COPY_DATA) {
-          // Not implemented.
-          //TODO skip data without buffering.
-          //continue NEXT_MSG;
-        //}
-
-        
-        // Standard size message handlers. These messages are always less than 
-        // 30k, so we can buffer them safely.
-
-        // Parse message header - advances 5 bytes.
-        r.startMessage();
-        
-        //_log('Read message header, type: ${_itoa(r.messageType)}, code: ${r.messageType}, length: ${r.messageLength}, offset: ${r.messageStart}.');
-
-        // Check for a sane message size - need to prevent accidently reading a
-        // massive number of bytes into the buffer.
-        if (!_checkMessageLength(r.messageType, r.messageLength)) {
-          _fatalError(new _PgError.client('Bad message length.')); //FIXME message.
-          return;
-        }
-        
-        // If only part of a message is left in buffer then read more data.
-        // -5 as the header has already been read.
-        if (r.bytesAvailable < r.messageLength + 1 - 5) //TODO add r.messageBytesAvailable
+        // Standard sized messages are handled after here. These messages are 
+        // always less than 30k, so we can buffer them safely.
+        // The entire message must be read into the buffer before continuing.
+        if (_reader.isMessageFragment)
           continue SOCKET_READ;
-
-        // Dispatch to message handler method.
-        _handleMessage(r);
+      
+        _handleMessage(_reader);
+      
+        if (_reader.messageBytesRemaining > 0) {
+          _error(new _PgError.client('Bad message length.')); //TODO this should just be a warning.
+      
+          // Get ready to handle the next message in the buffer.
+          // Trust the message length information from the header.
+          _reader.skipMessage();
+        }
+      
+        _reader.endMessage();
         
-        if (_state == _CLOSED)
-          return;
-                
-        // Note the length reported in the message header excludes the message
-        // type byte, hence +1.
-        if (r.messageBytesRead != r.messageLength + 1)
-            _error(new _PgError.client('Message contents do not agree with length in message header. Message type: ${_itoa(r.messageType)}, bytes read: ${r.messageBytesRead}, message length: ${r.messageLength}.'));
-            
-        // Get ready to handle the next message in the buffer.
-        // Use the message length information from the header.
-        r.skipMessage();
-      }
-    }
+      } // end message loop.      
+    } // end socket read loop.
   }
-
+  
   bool _handleMessage(_MessageReader r) {
     
     var t = r.messageType;

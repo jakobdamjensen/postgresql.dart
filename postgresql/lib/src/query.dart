@@ -11,38 +11,30 @@ class _Query implements Query {
   final ResultMapper _resultMapper;
   final _ResultReader _resultReader;
   final Streamer<Dynamic> _streamer = new Streamer<Dynamic>();
-  Dynamic _error;
   
   void _log(String msg) => print(msg);
   
   void changeState(_QueryState state) {
-    //TODO use _log
-    print('Query state change: $_state => $state.');
+    if (state == _state)
+      return;
+    _log('Query state change: $_state => $state.');
     _state = state;
-  }
-  
-  void onRowDescription(List<ColumnDesc> columns) {
-    _resultReader.columnDescs = columns;
   }
   
   void readResult() {
     _resultMapper.onData(_resultReader, _streamer);
   }
-    
-  void onQueryComplete() {
-    if (!_streamer.future.isComplete) {      
-      if (_error == null) {
-        _log('Query completed successfully.');
-        _streamer.complete(this);
-      } else {
-        _log('Query completed with error: $_error.');
-        _streamer.completeException(_error);
-      }
-    }
+  
+  void complete() {
+    changeState(_COMPLETE);
+    if (!_streamer.future.isComplete)
+      _streamer.complete(this);
   }
   
-  void onQueryError(err) {
-    _error = err;
+  void completeException(ex) {
+    changeState(_COMPLETE);
+    if (!_streamer.future.isComplete)
+      _streamer.completeException(ex);
   }
   
   // Delegate to stream impl.

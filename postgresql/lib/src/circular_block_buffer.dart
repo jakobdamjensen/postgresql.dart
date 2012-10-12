@@ -67,12 +67,13 @@ class _CircularBlockBuffer {
     return count;
   }
 
-  void appendFromSocket(Socket _socket, int readSize) {
+  int appendFromSocket(Socket _socket, int readSize) {
     var b = _allocateBlock();
     int bytesRead = _socket.readList(b.list, 0, readSize);     
     b.start = 0;
     b.end = bytesRead;
     _log('Read $bytesRead bytes.');
+    return bytesRead;
   }
   
   /// After a call to allocateBlock() there will be a free block available, 
