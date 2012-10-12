@@ -18,34 +18,32 @@ class _MessageWriter {
   /// Write header.
   void endMessage() {
     if (_msgType == _MSG_STARTUP) {
-      _setInt32(0, _pos); // Startup packets don't have a msg type header.
+      // Startup packets don't have a msg type header.
+      _encodeInt32(_pos, _buffer, 0);
     } else {
+      // Set message length. As per postgres protocol this length does not
+      // including the msgType byte, hence _pos - 1.
       _buffer[0] = _msgType;
-      _setInt32(1, _pos - 1); // Message length not including the msgType byte.
+      _encodeInt32(_pos - 1, _buffer, 1);
     }
   }
   
   void writeByte(int b) {
+    assert(b >= 0 && b <= 255);
     _buffer[_pos] = b;
     _pos++;
   }
   
-  // Big endian - network byte order.
-  void _setInt32(int offset, int i) {
-    _buffer[offset]     = (i >> (8*3)) & 0x000000FF;
-    _buffer[offset + 1] = (i >> (8*2)) & 0x000000FF;
-    _buffer[offset + 2] = (i >> 8)     & 0x000000FF;
-    _buffer[offset + 3] =  i           & 0x000000FF;
-  }
+
   
   void writeInt16(int i) {
-    _buffer[_pos] =     (i >> 8) & 0x000000FF;
-    _buffer[_pos + 1] =  i       & 0x000000FF;
+    _encodeInt16(i, _buffer, _pos);
     _pos += 2;
   }
   
+  // Signed int
   void writeInt32(int i) {
-    _setInt32(_pos, i);
+    _encodeInt32(i, _buffer, _pos);
     _pos += 4;
   }
   
@@ -54,7 +52,7 @@ class _MessageWriter {
   //FIXME how do you escape the null character.
   void writeString(String s) {
     for (int c in s.charCodes()) {
-      if (c > 255)
+      if (c > 127)
         c = '?'.charCodeAt(0);
       if (c == 0)
         throw new Exception('Null character not supported.');

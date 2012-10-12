@@ -1,7 +1,5 @@
 
 const int SOCKET_READ_SIZE = 8192;
-const int INPUT_BUFFER_SIZE = 8192 * 2;
-
 const int SOCKET_WRITE_SIZE = 8192;
 const int OUTPUT_BUFFER_SIZE = SOCKET_WRITE_SIZE;
 
@@ -111,7 +109,7 @@ String _messageName(int msg) {
     case _MSG_READY_FOR_QUERY: return 'ReadyForQuery';
     case _MSG_ROW_DESCRIPTION: return 'RowDescription';
     default:
-      return 'Unknown message type: ${_itoa}.';
+      return 'Unknown message type: ${_itoa(msg)} $msg.';
   }
 }
 

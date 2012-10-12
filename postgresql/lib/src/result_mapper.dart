@@ -37,11 +37,18 @@ class _DynamicRowResultMapper implements ResultMapper {
   List<String> _columnNames;
   List<Dynamic> _values;
   
+  StringBuffer _stringBuffer;
+  Uint8List _colBuffer;
+  int _fragmentStart;
+  
   void onData(ResultReader r, Streamer streamer) {
     
     while (r.hasNext()) {
       if (r.event == START_COMMAND) {
         _columnNames = r.columnDescs.map((c) => c.name);
+        
+        // Debugging
+        // r.columnDescs.forEach((cd) => print(cd));
         
       } else if (r.event == END_COMMAND) {
         //Do nothing
@@ -55,6 +62,36 @@ class _DynamicRowResultMapper implements ResultMapper {
         
       } else if (r.event == COLUMN_DATA) {
         _values[r.column] = r.readDynamic();
+        
+      } else if (r.event == COLUMN_DATA_FRAGMENT) {
+        
+        // Handle values which are too large to fit in the buffer.
+        // Only String and binary types are handled. Everything else should
+        // always fit in the buffer.
+        //if (r.columnDesc.fieldType == string???) {
+//          if (_stringBuffer == null)
+//            _stringBuffer = new StringBuffer();
+//          
+//          r.readStringFragment(_stringBuffer);
+//          
+//          if (r.lastFragment) {
+//            _values[r.column] = _stringBuffer.toString();
+//            _stringBuffer = null;
+//          }
+        //} else {
+          if (_colBuffer == null) {
+            _colBuffer = new Uint8List(r.columnSizeInBytes);
+            _fragmentStart = 0;
+          }
+        
+          r.readBytesFragment(_colBuffer, _fragmentStart);
+          _fragmentStart += r.fragmentSizeInBytes;
+          
+          if (r.lastFragment) {
+            _values[r.column] = _colBuffer;
+            _colBuffer = null;
+          }
+        //}
         
       } else {
         assert(false);

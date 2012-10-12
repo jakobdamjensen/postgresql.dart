@@ -16,4 +16,6 @@ class _ColumnDesc implements ColumnDesc {
   bool get binary => formatCode == 1;
   
   _ColumnDesc(this.index, this.name, this.fieldId, this.tableColNo, this.fieldType, this.dataSize, this.typeModifier, this.formatCode);
+  
+  String toString() => 'ColumnDesc: index: $index, name: $name, fieldId: $fieldId, tableColNo: $tableColNo, fieldType: $fieldType, dataSize: $dataSize, typeModifier: $typeModifier, formatCode: $formatCode.';
 }

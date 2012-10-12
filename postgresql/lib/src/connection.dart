@@ -29,7 +29,7 @@ class _Connection implements Connection {
       throw new Exception('No connection settings specified.');
           
     _output = new Uint8List(OUTPUT_BUFFER_SIZE); //TODO make buffer sizes configurable.
-    _reader = new _MessageReader(INPUT_BUFFER_SIZE, 2);
+    _reader = new _MessageReader(SOCKET_READ_SIZE, 2);
     _writer = new _MessageWriter(_output);
   }
   
@@ -349,9 +349,6 @@ class _Connection implements Connection {
     
       if (bytesRead == 0)
         return;
-
-      // Debugging
-      _reader._buffer._logState();
       
       if (_reader.state == _MESSAGE_WITHIN_BODY) {
         // This can only happen for types which can be processed in fragments
@@ -360,15 +357,22 @@ class _Connection implements Connection {
         
         if ((_state != _BUSY && _state != _READY)
             || _reader.messageType != _MSG_DATA_ROW) {
-          _fatalError(new _PgError.client('Lost sync.')); //TODO message
+          _fatalError(new _PgError.client('Lost sync #1.')); //TODO message
         }
         
         assert(_query != null);
         _query.readResult();
         
-        if (_reader.state == _MESSAGE_HEADER || _reader.state == _MESSAGE_BODY) {
+        _reader._logState();
+        
+        //TODO consider adding another state.
+        if (_reader.bytesAvailable > 0 && 
+            (_reader.state == _MESSAGE_HEADER
+              || _reader.state == _MESSAGE_BODY)) {
           // Fallthrough - i.e. continue NEXT_MSG;
         } else if (_reader.state == _MESSAGE_WITHIN_BODY) {
+          continue SOCKET_READ;
+        } else if (_reader.bytesAvailable == 0) {
           continue SOCKET_READ;
         } else {
           assert(false);
@@ -388,11 +392,12 @@ class _Connection implements Connection {
           _reader.startMessage();
         }
         
-        print('state: ${_reader.state}, index: ${_reader.index}, _msgStart: ${_reader._msgStart}');
         assert(_reader.state == _MESSAGE_BODY);
 
+        _log('Received message ${_messageName(_reader.messageType)} length: ${_reader.messageLength}');
+        
         if (!_checkMessageLength(_reader.messageType, _reader.messageLength)) {
-          _fatalError(new _PgError.client('Lost sync.'));
+          _fatalError(new _PgError.client('Lost sync #2.'));
         }
 
         // In authenticating state only handle a subset of the message types.
@@ -440,16 +445,23 @@ class _Connection implements Connection {
             _changeState(_READY);
           
           if (_state != _READY)
-            _fatalError(new _PgError.client('Lost sync.')); //TODO message
+            _fatalError(new _PgError.client('Lost sync #3.')); //TODO message
+          
+          assert(_query != null);
           
           _query.readResult();
           
-          if (_reader.state == _MESSAGE_HEADER || _reader.state == _MESSAGE_BODY)
+          if (_reader.bytesAvailable > 0 && 
+              (_reader.state == _MESSAGE_HEADER
+                || _reader.state == _MESSAGE_BODY)) {
             continue NEXT_MSG;
-          else if (_reader.state == _MESSAGE_WITHIN_BODY)
+          } else if (_reader.state == _MESSAGE_WITHIN_BODY) {
             continue SOCKET_READ;
-          else
-            assert(false);
+          } else if (_reader.bytesAvailable == 0) {
+            continue SOCKET_READ;
+          } else {
+              assert(false);
+          }
         }
         
         // Standard sized messages are handled after here. These messages are 
@@ -524,7 +536,7 @@ class _Connection implements Connection {
         
       default:
         _error(new _PgError.client('Unknown message type received: ${_itoa(t)} ${_messageName(t)}.'));
-        r.skipMessage();
+        r.skipMessage(); //FIXME this will probably just blow up, as this probably means the connection has lost sync.
         break;
     }
   }

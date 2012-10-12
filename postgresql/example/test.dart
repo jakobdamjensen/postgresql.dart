@@ -16,19 +16,196 @@
 #source('../lib/src/encoding.dart');
 #source('../lib/src/message_reader.dart');
 #source('../lib/src/message_writer.dart');
+#source('../lib/src/pg_error.dart');
 #source('../lib/src/query.dart');
 #source('../lib/src/row_description.dart');
+#source('../lib/src/result_mapper.dart');
 #source('../lib/src/result_reader.dart');
+#source('../lib/src/settings.dart');
 #source('../lib/src/simple_buffer.dart');
 #source('../lib/src/stream.dart');
 
 void main() {
-  testBuffer5();
-  testBuffer2();
-  //testBuffer3(); //FIXME fails
-  testBuffer4();
+  defaultSettings = new Settings(
+        username: 'testdb', 
+        database: 'testdb',
+        password: 'password',
+        onUnhandledErrorOrNotice: (err) => print('Unhandled: $err'));
+  
+  testMessageFragmentParsing2();
 }
 
+void testMessageParsing() {
+  var m = new _Mocket();
+  var c = new _Connection(null);
+  c._state = _BUSY;
+  c._socket = m;
+  
+  m.data = combineUint8Lists([
+    makeRowDescriptionMessage(3),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeCommandCompleteMessage('SELECT 1'),
+    makeReadyForQueryMessage('I')
+  ]);
+
+  c.query('Fake query to set up state.').one().then((row) => print('DONE: $row'));
+
+  c._readData();
+}
+
+void testMessageParsing2() {
+  var m = new _Mocket();
+  var c = new _Connection(null);
+  c._state = _BUSY;
+  c._socket = m;
+  
+  m.data = combineUint8Lists([
+    makeRowDescriptionMessage(3),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeCommandCompleteMessage('SELECT 2'),
+    makeReadyForQueryMessage('I')
+  ]);
+
+  c.query('Fake query to set up state.').all().then((rows) => print('DONE: $rows'));
+  
+  c._readData();
+}
+
+void testMessageFragmentParsing() {
+  var m = new _Mocket();
+  var c = new _Connection(null);
+  c._state = _BUSY;
+  c._socket = m;
+  
+  int longStringLength = 19 * 1024;
+  
+  m.data = combineUint8Lists([
+    makeRowDescriptionMessage(3),
+    makeDataRowMessage(["sfsdfdsf", makeLongString(longStringLength), "fdsfdsfds"], 20 * 1024),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeCommandCompleteMessage('SELECT 1'),
+    makeReadyForQueryMessage('I')
+  ]);
+
+  c.query('Fake query to set up state.').all().then((rows) {
+    assert(rows.length == 2 && rows[0][1].length == longStringLength);
+    print('DONE');
+  });
+  
+  c._readData();  
+}
+
+void testMessageFragmentParsing2() {
+  var m = new _Mocket2();
+  var c = new _Connection(null);
+  c._state = _BUSY;
+  c._socket = m;
+  
+  int longStringLength = 19 * 1024;
+  
+  m.data = combineUint8Lists([
+    makeRowDescriptionMessage(3),
+    makeDataRowMessage(["sfsdfdsf", makeLongString(longStringLength), "fdsfdsfds"], 20 * 1024),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeCommandCompleteMessage('SELECT 1'),
+    makeReadyForQueryMessage('I')
+  ]);
+
+  c.query('Fake query to set up state.').all().then((rows) {
+    assert(rows.length == 2 && rows[0][1].length == longStringLength);
+    print('DONE');
+  });
+  
+  c._readData();
+  c._readData();
+  c._readData();
+}
+
+String makeLongString(int len) {
+  var sb = new StringBuffer();
+  for (int i = 0; i < len; i++) {
+    sb.add('a');
+  }
+  return sb.toString();
+}
+
+
+Uint8List makeRowDescriptionMessage(int count) {
+  var list = new List<ColumnDesc>();
+  for (int i = 0; i < count; i++) {
+    list.add(new _ColumnDesc(i, 'column$i', 0, 0, 705, -2, -1, 0));
+  }
+  return makeRowDescriptionMessageImpl(list, 8192);
+}
+
+Uint8List makeRowDescriptionMessageImpl(List<ColumnDesc> cols, int maxSize) {
+  var buffer = new Uint8List(maxSize);
+  var w = new _MessageWriter(buffer);  
+  
+  w.startMessage(_MSG_ROW_DESCRIPTION);
+  w.writeInt16(cols.length);
+  
+  for (var c in cols) {
+    w.writeString(c.name);
+    w.writeInt32(c.fieldId);
+    w.writeInt16(c.tableColNo);
+    w.writeInt32(c.fieldType);
+    w.writeInt16(c.dataSize);
+    w.writeInt32(c.typeModifier);
+    w.writeInt16(c.formatCode);
+  }
+  
+  w.endMessage();
+  
+  return new Uint8List.view(buffer.asByteArray(0, w.bytesWritten));
+}
+
+// All columns are type String.
+Uint8List makeDataRowMessage(List<String> values, int maxSize) {
+  var buffer = new Uint8List(maxSize);
+  var w = new _MessageWriter(buffer);
+  
+  w.startMessage(_MSG_DATA_ROW);
+  w.writeInt16(values.length);
+  
+  for (var val in values) {
+    w.writeInt32(val.length);
+    var bytes = new List<int>();
+    for (var c in val.charCodes()) {
+      if (c > 127 || c < 0)
+        c = '?'.charCodeAt(0);
+      w.writeByte(c);
+    }
+  }
+
+  w.endMessage();
+  
+  return new Uint8List.view(buffer.asByteArray(0, w.bytesWritten));
+}
+
+Uint8List makeCommandCompleteMessage(String commandTag) {
+  var buffer = new Uint8List(1024);
+  var w = new _MessageWriter(buffer);
+  
+  w.startMessage(_MSG_COMMAND_COMPLETE);
+  w.writeString(commandTag);
+  w.endMessage();
+  
+  return new Uint8List.view(buffer.asByteArray(0, w.bytesWritten));
+}
+
+// transaction is 'I', 'T', or 'E'. If in doubt just I.
+Uint8List makeReadyForQueryMessage(String transaction) {
+  var buffer = new Uint8List(1024);
+  var w = new _MessageWriter(buffer);
+  
+  w.startMessage(_MSG_READY_FOR_QUERY);
+  w.writeByte(transaction.charCodeAt(0));
+  w.endMessage();
+  
+  return new Uint8List.view(buffer.asByteArray(0, w.bytesWritten));
+}
 
 void testBuffer2() {
   int size = 8912;
@@ -197,31 +374,17 @@ void testBuffer5() {
 }
 
 
-void testMessageFragmentParsing() {
-  var m = new _Mocket();
-  var c = new _Connection();
-  c._state = _Connection._BUSY;
-  c._socket = m;
-  
-  m.data = combineUint8Lists([
-    makeMockMessage(_MSG_ERROR_RESPONSE, INPUT_BUFFER_SIZE ~/ 4),
-    makeMockMessage(_MSG_ERROR_RESPONSE, INPUT_BUFFER_SIZE ~/ 4 - 100),
-    makeMockMessage(_MSG_ERROR_RESPONSE, INPUT_BUFFER_SIZE - 100)
-  ]);
-
-  c._readMessages();
-  c._readMessages();
-  
-  print('done');
-}
-
 class _Mocket implements Socket {
   List<int> data;
   int bytesRead = 0;
+  bool closed = false;
   
   int available() => (data != null) ? data.length : 0;
   
-  int readList(List<int> list, int offset, int length) {    
+  int readList(List<int> list, int offset, int length) {
+    if (closed)
+      throw new Exception('Attempted to read on closed mocket.');
+    
     int available = min(data.length - bytesRead, length);
     print('readList() $available');
     for (int i = 0; i < available; i++) {
@@ -229,6 +392,58 @@ class _Mocket implements Socket {
     }
     bytesRead += available;
     return available;
+  }
+  
+  int writeList(List<int> buffer, int offset, int count) {
+    if (closed)
+      throw new Exception('Attempted to write on closed mocket.');
+    
+    print('Mocket sent $count bytes.');
+    return count;
+  }
+  
+  void close([bool halfClose = false]) {
+    print('Mocket closed.');
+  }
+}
+
+class _Mocket2 implements Socket {
+  List<int> data;
+  int bytesRead = 0;
+  bool closed = false;
+  
+  int packetCounter = 0;
+  int packetsBeforeZeroRead = 2;
+  
+  int available() => (data != null) ? data.length : 0;
+  
+  int readList(List<int> list, int offset, int length) {
+    if (closed)
+      throw new Exception('Attempted to read on closed mocket.');
+    
+    packetCounter++;
+    if (packetCounter % packetsBeforeZeroRead == 0)
+      return 0;
+    
+    int available = min(data.length - bytesRead, length);
+    print('readList() $available');
+    for (int i = 0; i < available; i++) {
+      list[offset + i] = data[i + bytesRead];
+    }
+    bytesRead += available;
+    return available;
+  }
+  
+  int writeList(List<int> buffer, int offset, int count) {
+    if (closed)
+      throw new Exception('Attempted to write on closed mocket.');
+    
+    print('Mocket sent $count bytes.');
+    return count;
+  }
+  
+  void close([bool halfClose = false]) {
+    print('Mocket closed.');
   }
 }
 

@@ -35,6 +35,10 @@ class _ResultReader implements ResultReader {
   String _commandTag; // Information returned after completing a command.
   List<ColumnDesc> _columnDescs;
   
+  int _colStart; // The byte index of the column.
+  int _fragmentStart; // The byte index of the start of the current fragment.
+  int _fragmentSize; // The length of the current fragment.
+  
   ResultReaderEventType get event => _event;
   int get command => _command;
   int get row => _row;
@@ -43,6 +47,14 @@ class _ResultReader implements ResultReader {
   ColumnDesc get columnDesc => _columnDescs[column];
   List<ColumnDesc> get columnDescs => _columnDescs;
   int get columnCount => columnDescs.length;
+  
+  // TODO only allow this to be called when in fragment state.
+  
+  //FIXME wrong - column is not the whole message.
+  int get fragmentSizeInBytes => _fragmentSize;
+
+  // TODO only allow this to be called when in fragment state.
+  bool get lastFragment => _fragmentStart + _fragmentSize == _colStart + _colSize;
   
   // Pull next event.
   // i.e. Read another piece of data from the buffer. If there's no more data
@@ -150,12 +162,12 @@ class _ResultReader implements ResultReader {
     //TODO check if colSize is allowed to be big.
     // I.e. check against data type oids.
     
+    _colStart = r.index;
+    
     // Handle column fragments.
-    if (_colSize > r.contiguousBytesAvailable) {
-      print('Data fragment, column size: $_colSize, bytes available in buffer: ${r.contiguousBytesAvailable}.');      
-      _event = COLUMN_DATA_FRAGMENT;
+    if (_colSize > r.bytesAvailable) {
       _state = _STATE_COL_FRAGMENT;
-      return true;
+      return _parseColFragment();
     }
     
     _event = COLUMN_DATA;
@@ -164,7 +176,6 @@ class _ResultReader implements ResultReader {
   }
   
   bool _parseColFragment() {
-    throw new Exception('Column data fragments not implemented.');
     
     if (_msgReader.bytesAvailable < 1)
       return false;
@@ -172,9 +183,28 @@ class _ResultReader implements ResultReader {
     assert(_state == _STATE_COL_FRAGMENT);
     
     // Continue reading data in the buffer.
-    //TODO set some index positions. so we know where this fragment should go.
+    _fragmentStart = _msgReader.index;
+    int columnBytesRemaining = _colStart + _colSize - _fragmentStart;
+    _fragmentSize = min(_msgReader.bytesAvailable, columnBytesRemaining);
     _event = COLUMN_DATA_FRAGMENT;
-    _state = _STATE_COL_FRAGMENT;
+    
+    if (lastFragment)
+      _state = _STATE_COL_HEADER;
+    else
+      _state = _STATE_COL_FRAGMENT;
+    
+    print('############################');
+    print('index: ${_msgReader.index}');
+    print('messageStart: ${_msgReader.messageStart}');
+    print('messageEnd: ${_msgReader.messageEnd}');
+    print('messageBytesRemaining: ${_msgReader.messageBytesRemaining}');
+    print('bytesAvailable: ${_msgReader.bytesAvailable}');
+    print('contiguousBytesAvailable: ${_msgReader.contiguousBytesAvailable}');
+    
+    print('fragmentSizeInBytes: $fragmentSizeInBytes');
+    print('lastFragment: $lastFragment');
+    print('############################');
+    
     return true;
   }
   
@@ -270,7 +300,7 @@ class _ResultReader implements ResultReader {
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
-    return decodeBytes(columnDesc, colData, 0, colData.length);
+    return _decodeBytes(columnDesc, colData, 0, colData.length);
   }
   
   void readBytesInto(Uint8List buffer, int start) {
@@ -283,7 +313,7 @@ class _ResultReader implements ResultReader {
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
-    return decodeString(columnDesc, colData, 0, colData.length);
+    return _decodeString(columnDesc, colData, 0, colData.length);
   }
   
   int readInt() { 
@@ -292,7 +322,7 @@ class _ResultReader implements ResultReader {
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
-    return decodeInt(columnDesc, colData, 0, colData.length);    
+    return _decodeInt(columnDesc, colData, 0, colData.length);    
   }
   
   bool readBool() {
@@ -301,7 +331,7 @@ class _ResultReader implements ResultReader {
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
-    return decodeBool(columnDesc, colData, 0, colData.length);    
+    return _decodeBool(columnDesc, colData, 0, colData.length);    
   }
 
   Decimal readDecimal() {
@@ -310,20 +340,33 @@ class _ResultReader implements ResultReader {
     
     //TODO don't copy data here, just pass a reference to the buffer.
     var colData = _msgReader.readBytes(_colSize);
-    return decodeDecimal(columnDesc, colData, 0, colData.length);    
+    return _decodeDecimal(columnDesc, colData, 0, colData.length);    
   }
   
   //TODO This can only be accessed when event == END_COMMAND
   String get commandTag => _commandTag;
-
-  int get fragmentSizeInBytes { throw new Exception('Not implemented'); }
   
   bool readStringFragment(StringBuffer buffer) {
-    throw new Exception('Not implemented.');
+    //TODO make a zero copy impl, rather than using readBytes().
+    //TODO Perhaps standard lib should have a StringBuffer.addFromCharCodes(List<int> chars);
+    // Note that bytes may be split accross two blocks, so may need to call
+    // buffer.add() twice.
+    if (_msgReader.bytesAvailable > 0) {
+      var bytes = _msgReader.readBytes(min(_fragmentSize, _msgReader.bytesAvailable));
+      print ('Got ${bytes.length} bytes from fragment');
+      buffer.add(new String.fromCharCodes(bytes));
+    }
   }
   
   bool readBytesFragment(Uint8List buffer, int start) {
-    throw new Exception('Not implemented.');
+    //TODO make a zero copy impl, rather than using readBytes().
+    if (_msgReader.bytesAvailable > 0) {
+      var bytes = _msgReader.readBytes(min(_fragmentSize, _msgReader.bytesAvailable));
+      print ('Got ${bytes.length} bytes from fragment');
+      for (int i = 0; i < bytes.length; i++) {
+        buffer[start + i] = bytes[i];
+      }
+    }
   }
   
 }

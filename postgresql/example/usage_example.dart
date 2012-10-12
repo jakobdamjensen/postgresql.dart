@@ -7,7 +7,7 @@ void main() {
   pg.connect(s)
   ..then((c) {
     print('connected...');
-    runExampleQueryBad(c);
+    runExampleQuery(c);
   })
   ..handleException((e) {
     print('Exception: $e');
@@ -16,7 +16,7 @@ void main() {
 }
 
 void runExampleQuery(pg.Connection c) {
-  var sql = 'select 1 as one, \'2\' as two, 3.1 as three;';
+  var sql = 'select 1 as one, \'sfdgsdfgdfgfd\' as two, 3.1 as three;';
   
   c.query(sql).one()
     ..then((result) {

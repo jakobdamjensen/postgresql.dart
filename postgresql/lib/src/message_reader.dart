@@ -43,14 +43,14 @@ class _MessageReader {
   void _log(String msg) => print('MessageReader: $msg');
   
   void _logState() {
-    _buffer._logState();
+    _log('index: $index, bytesAvailable: $bytesAvailable, messageType: $messageType, messageLength: $messageLength.');
   }
   
   //TODO remove this, let connection append directly to the buffer.
   int appendFromSocket(Socket _socket) {
-    return _buffer.appendFromSocket(_socket, _readSize);
+    int bytesRead = _buffer.appendFromSocket(_socket, _readSize);
     
-// Print debugging info
+    // Print debugging info
 //    int i = _buffer.block.start;
 //    while (i < _buffer.block.end - 5) {
 //      int mtype = _buffer.block.list[i];
@@ -59,9 +59,11 @@ class _MessageReader {
 //      int c = _buffer.block.list[i + 3];
 //      int d = _buffer.block.list[i + 4];
 //      int len = _decodeInt32(a, b, c, d);
-//      _log('Message: ${_itoa(mtype)} ${_messageName(mtype)} length: $len.');
+//      print('########### Message: ${_itoa(mtype)} $mtype ${_messageName(mtype)} length: $len.');
 //      i += len;
 //    }
+    
+    return bytesRead;
   }
   
   int peekByteFast() {
@@ -84,6 +86,9 @@ class _MessageReader {
   }
     
   int readByte() {
+    // Check that we haven't read past the end of the message.
+    assert(_msgStart == null || _msgLength == null || messageBytesRemaining > 0);
+    
     _buffer.checkBytesAvailable();
     int b = _buffer.block.list[_buffer.block.start];
     _buffer.block.start++;
@@ -128,29 +133,6 @@ class _MessageReader {
     
     return _decodeInt32(a, b, c, d);
   }
-
-  // Big endian two's complement.
-  // Please, somebody show me the cool way to do it with bitwise operators ;)
-  int _decodeInt16(int a, int b) {
-    assert(a < 256 && b < 256 && a >= 0 && b >= 0);
-    int i = (a << 8) | (b << 0); 
-    
-    if (i >= 0x8000)
-      i = -0x10000 + i;
-    
-    return i;
-  }
-
-  // Big endian two's complement.
-  int _decodeInt32(int a, int b, int c, int d) {
-    assert(a < 256 && b < 256 && c < 256 && d < 256 && a >= 0 && b >= 0 && c >= 0 && d >= 0);
-    int i = (a << 24) | (b << 16) | (c << 8) | (d << 0);
-    
-    if (i >= 0x80000000)
-      i = -0x100000000 + i;
-    
-    return i;
-  }
   
   // Slow simple version.
   //TODO Fast version that just searches for null char and copies accross one
@@ -192,7 +174,7 @@ class _MessageReader {
   // Can only skip messages which have been entirely read into the buffer.
   void skipMessage() {
     _state = _MESSAGE_HEADER;
-    assert(_msgType > 0);
+    assert(_msgType >= 0);
     assert(_msgLength > 0);
     int endIndex = _msgStart + _msgLength + 1;
     if (endIndex == index)

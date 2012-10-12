@@ -114,6 +114,9 @@ abstract class ResultReader {
   // Or COLUMN_DATA too??
   int get fragmentSizeInBytes;
   
+  // If the final fragment after a sequence of fragments have been received.
+  bool get lastFragment;
+  
   // Returns true if there is still more data fragments to read.
   bool readStringFragment(StringBuffer buffer);
   
@@ -159,10 +162,10 @@ abstract class ColumnDesc {
   //TODO figure out what to name these.
   // Perhaps just use libpq names as they will be documented in existing code 
   // examples. It may not be neccesary to store all of this info.
-  int get fieldId;
-  int get tableColNo;
-  int get fieldType;
-  int get dataSize;
-  int get typeModifier;
-  int get formatCode;
+  int get fieldId; // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
+  int get tableColNo; // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
+  int get fieldType; // The object ID of the field's data type.
+  int get dataSize; // The data type size (see pg_type.typlen). Note that negative values denote variable-width types.
+  int get typeModifier; // The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
+  int get formatCode; // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
 }

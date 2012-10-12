@@ -73,6 +73,7 @@ class _CircularBlockBuffer {
     b.start = 0;
     b.end = bytesRead;
     _log('Read $bytesRead bytes.');
+    _logState();
     return bytesRead;
   }
   
