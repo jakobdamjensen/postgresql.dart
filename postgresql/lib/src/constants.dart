@@ -1,7 +1,7 @@
 
-const int SOCKET_READ_SIZE = 8192;
-const int SOCKET_WRITE_SIZE = 8192;
-const int OUTPUT_BUFFER_SIZE = SOCKET_WRITE_SIZE;
+const int _SOCKET_READ_SIZE = 8192;
+const int _SOCKET_WRITE_SIZE = 8192;
+const int _OUTPUT_BUFFER_SIZE = _SOCKET_WRITE_SIZE;
 
 const int _STATE_MSG_HEADER = 0;
 const int _STATE_COL_HEADER = 1;

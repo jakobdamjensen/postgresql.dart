@@ -5,15 +5,9 @@ const int _MESSAGE_WITHIN_BODY = 2;
 
 class _MessageReader {
   
-  _MessageReader(int readSize, int initialBlocks) 
-      : _readSize = readSize,
-        _buffer = new _CircularBlockBuffer(readSize, initialBlocks),
-        _state = _MESSAGE_HEADER;
-//          _buffer = new _SimpleBuffer(65535);
+  _MessageReader(this._buffer) : _state = _MESSAGE_HEADER;
   
-  final int _readSize;
   final _CircularBlockBuffer _buffer;
-  //final _SimpleBuffer _buffer;
   
   int _state;
   int _msgType;
@@ -44,26 +38,6 @@ class _MessageReader {
   
   void _logState() {
     _log('index: $index, bytesAvailable: $bytesAvailable, messageType: $messageType, messageLength: $messageLength.');
-  }
-  
-  //TODO remove this, let connection append directly to the buffer.
-  int appendFromSocket(Socket _socket) {
-    int bytesRead = _buffer.appendFromSocket(_socket, _readSize);
-    
-    // Print debugging info
-//    int i = _buffer.block.start;
-//    while (i < _buffer.block.end - 5) {
-//      int mtype = _buffer.block.list[i];
-//      int a = _buffer.block.list[i + 1];
-//      int b = _buffer.block.list[i + 2];
-//      int c = _buffer.block.list[i + 3];
-//      int d = _buffer.block.list[i + 4];
-//      int len = _decodeInt32(a, b, c, d);
-//      print('########### Message: ${_itoa(mtype)} $mtype ${_messageName(mtype)} length: $len.');
-//      i += len;
-//    }
-    
-    return bytesRead;
   }
   
   int peekByteFast() {

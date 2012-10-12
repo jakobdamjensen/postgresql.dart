@@ -1,5 +1,10 @@
 
 Future<Connection> _connect([Settings settings = null]) {
+  
+  settings = (settings == null) ? defaultSettings : settings;    
+  if (settings == null)
+    throw new Exception('Settings not specified.');
+  
   var c = new _Connection(settings);
   return c._connect();
 }
@@ -13,23 +18,19 @@ class _Connection implements Connection {
   
   final Queue<_Query> _sendQueryQueue = new Queue<_Query>();
   _Query _query; // The query currently being sent, or having it's results processed.  
-  Socket _socket;
+  Socket _socket;  
+  _CircularBlockBuffer _input;
   Uint8List _output;
   _MessageReader _reader;
   _MessageWriter _writer;
   final Completer<Connection> _connectCompleter = new Completer<Connection>();
   final Settings settings;
   
-  _Connection(Settings settings)
-      : this.settings = (settings == null) ? defaultSettings : settings {
-        
-    //TODO throw error via completer instead.
-    // Or check settings value in the _connect() function.
-    if (this.settings == null)
-      throw new Exception('No connection settings specified.');
-          
-    _output = new Uint8List(OUTPUT_BUFFER_SIZE); //TODO make buffer sizes configurable.
-    _reader = new _MessageReader(SOCKET_READ_SIZE, 2);
+  _Connection(this.settings) {          
+    //TODO make buffer/read sizes configurable.
+    _output = new Uint8List(_OUTPUT_BUFFER_SIZE);
+    _input = new _CircularBlockBuffer(_SOCKET_READ_SIZE, 2);
+    _reader = new _MessageReader(_input);
     _writer = new _MessageWriter(_output);
   }
   
@@ -344,11 +345,25 @@ class _Connection implements Connection {
       // Check to see if the connection is in a valid reading state.
       if (!_ok && _state != _AUTHENTICATING && _state != _AUTHENTICATED)
         return;
-    
-      int bytesRead = _reader.appendFromSocket(_socket);
+      
+      //TODO make readSize configurable.
+      int bytesRead = _input.appendFromSocket(_socket, _SOCKET_READ_SIZE);
     
       if (bytesRead == 0)
         return;
+      
+      // Print debugging info
+//    int i = _input.block.start;
+//    while (i < _input.block.end - 5) {
+//      int mtype = _input.block.list[i];
+//      int a = _input.block.list[i + 1];
+//      int b = _input.block.list[i + 2];
+//      int c = _input.block.list[i + 3];
+//      int d = _input.block.list[i + 4];
+//      int len = _decodeInt32(a, b, c, d);
+//      print('########### Message: ${_itoa(mtype)} $mtype ${_messageName(mtype)} length: $len.');
+//      i += len;
+//    }
       
       if (_reader.state == _MESSAGE_WITHIN_BODY) {
         // This can only happen for types which can be processed in fragments
@@ -365,7 +380,9 @@ class _Connection implements Connection {
         
         _reader._logState();
         
-        //TODO consider adding another state.
+        //TODO This is likely a bit broken.
+        // Consider allowing the reader to return a value of what to do next.
+        // i.e. NEXT_MSG, SOCKET_READ, or error, or fatal error.
         if (_reader.bytesAvailable > 0 && 
             (_reader.state == _MESSAGE_HEADER
               || _reader.state == _MESSAGE_BODY)) {
@@ -450,7 +467,10 @@ class _Connection implements Connection {
           assert(_query != null);
           
           _query.readResult();
-          
+
+          //TODO This is likely a bit broken.
+          // Consider allowing the reader to return a value of what to do next.
+          // i.e. NEXT_MSG, SOCKET_READ, or error, or fatal error.
           if (_reader.bytesAvailable > 0 && 
               (_reader.state == _MESSAGE_HEADER
                 || _reader.state == _MESSAGE_BODY)) {
