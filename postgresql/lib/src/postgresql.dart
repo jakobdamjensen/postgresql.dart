@@ -36,7 +36,7 @@ Future<Connection> connect([Settings settings = null]) {
 abstract class Connection {
   //TODO Future<int> exec(String sql);
   //TODO ConnectionState get state;
-  Query query(String sql, {int timeoutMillis, ResultMapper resultMapper});
+  Query query(String sql, {int timeoutMillis, Mapper resultMapper});
   void close();
 }
 
@@ -45,7 +45,7 @@ abstract class Query extends Stream<Dynamic> {
   //TODO void cancel();  
 }
 
-abstract class ResultMapper {
+abstract class Mapper {
   void onData(ResultReader r, Streamer streamer);
 }
 

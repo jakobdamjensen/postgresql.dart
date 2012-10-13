@@ -8,7 +8,7 @@ class _Query implements Query {
   
   final String sql;
   _QueryState get state => _state;
-  final ResultMapper _resultMapper;
+  final Mapper _resultMapper;
   final _ResultReader _resultReader;
   final Streamer<Dynamic> _streamer = new Streamer<Dynamic>();
   

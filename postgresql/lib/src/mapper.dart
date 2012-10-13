@@ -31,7 +31,7 @@ class _DynamicRow {
   String toString() => _values.toString();
 }
 
-class _DynamicRowResultMapper implements ResultMapper {
+class _DynamicRowMapper implements Mapper {
   
   _DynamicRow _row;
   List<String> _columnNames;

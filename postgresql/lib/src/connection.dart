@@ -133,7 +133,7 @@ class _Connection implements Connection {
     _changeState(_AUTHENTICATING);
   }
   
-  Query query(String sql, {int timeoutMillis, ResultMapper resultMapper}) {
+  Query query(String sql, {int timeoutMillis, Mapper resultMapper}) {
 
     if (sql == null || sql == '')
       throw new Exception('Sql is null or empty.');
@@ -143,7 +143,7 @@ class _Connection implements Connection {
       throw new Exception('Query timeout not implemented.');
     
     if (resultMapper == null)
-      resultMapper = new _DynamicRowResultMapper(); 
+      resultMapper = new _DynamicRowMapper(); 
     
     if (!_ok)
       throw new Exception('Attempted a query on a closed connection.');
