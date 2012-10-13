@@ -18,13 +18,15 @@
 
 class _ResultReader implements ResultReader {
   
-  _ResultReader(this._msgReader) {
+  _ResultReader(_InputBuffer buffer)
+      : _in = buffer
+  {
     _command = -1;
     _state = _STATE_MSG_HEADER;
   }
   
+  final _InputBuffer _in;
   int _state;
-  final _InputBuffer _msgReader;
   
   ResultReaderEventType _event;
   int _command = -1; // Command index.
@@ -61,23 +63,23 @@ class _ResultReader implements ResultReader {
   // to read, i.e. no more events, then return false.
   bool hasNext() {
     
-    if (_msgReader.state == _MESSAGE_HEADER) {
-      if (_msgReader.bytesAvailable < 5)
+    if (_in.state == _MESSAGE_HEADER) {
+      if (_in.bytesAvailable < 5)
         return false;
       
-      _msgReader.startMessage();
+      _in.startMessage();
     }
     
     switch (_state) {
         
       case _STATE_MSG_HEADER:
-        if (_msgReader.messageType == _MSG_COMMAND_COMPLETE) {
+        if (_in.messageType == _MSG_COMMAND_COMPLETE) {
           return _parseCommandComplete();
           
-        } else if (_msgReader.messageType == _MSG_ROW_DESCRIPTION) {
+        } else if (_in.messageType == _MSG_ROW_DESCRIPTION) {
           return _parseRowDescription();
           
-        } else if (_msgReader.messageType == _MSG_DATA_ROW) {
+        } else if (_in.messageType == _MSG_DATA_ROW) {
           return _parseDataRow();
         }
         return false; // Bail out to the main loop and handle the message there.
@@ -96,17 +98,15 @@ class _ResultReader implements ResultReader {
   bool _parseDataRow() {
     assert(_state == _STATE_MSG_HEADER);
     
-    var r = _msgReader;
-    
-    assert(r.messageType == _MSG_DATA_ROW);
-    assert(r.messageLength >= 6);
+    assert(_in.messageType == _MSG_DATA_ROW);
+    assert(_in.messageLength >= 6);
     
     // If there's not enough data to read the data row header then bail out and 
     // wait for more data to arrive.
-    if (r.bytesAvailable < 2)
+    if (_in.bytesAvailable < 2)
       return false;
     
-    _colCount = r.readInt16();
+    _colCount = _in.readInt16();
     
     // Check the column count in the DataRow message matches the count in
     // the RowDescription message.
@@ -124,8 +124,6 @@ class _ResultReader implements ResultReader {
   bool _parseColHeader() {
     assert(_state == _STATE_COL_HEADER);
     
-    var r = _msgReader;
-    
     if (_column + 1 >= _colCount) {
       
       //TODO check message length and bytes read match.
@@ -137,10 +135,10 @@ class _ResultReader implements ResultReader {
       //  r.skipMessage();
       //}
       
-      if (r.messageBytesRemaining != 0)
+      if (_in.messageBytesRemaining != 0)
         throw new Exception('Lost sync.');
       
-      r.endMessage();
+      _in.endMessage();
       
       _column = -1;
       _event = END_ROW;
@@ -151,10 +149,10 @@ class _ResultReader implements ResultReader {
     
     // Check there's enough data to read the header, otherwise bail out and read
     // more data.
-    if (r.bytesAvailable < 4)
+    if (_in.bytesAvailable < 4)
       return false;
     
-    _colSize = r.readInt32();
+    _colSize = _in.readInt32();
     assert(_colSize > 0);
     
     _column++;
@@ -162,10 +160,10 @@ class _ResultReader implements ResultReader {
     //TODO check if colSize is allowed to be big.
     // I.e. check against data type oids.
     
-    _colStart = r.index;
+    _colStart = _in.index;
     
     // Handle column fragments.
-    if (_colSize > r.bytesAvailable) {
+    if (_colSize > _in.bytesAvailable) {
       _state = _STATE_COL_FRAGMENT;
       return _parseColFragment();
     }
@@ -177,15 +175,15 @@ class _ResultReader implements ResultReader {
   
   bool _parseColFragment() {
     
-    if (_msgReader.bytesAvailable < 1)
+    if (_in.bytesAvailable < 1)
       return false;
     
     assert(_state == _STATE_COL_FRAGMENT);
     
     // Continue reading data in the buffer.
-    _fragmentStart = _msgReader.index;
+    _fragmentStart = _in.index;
     int columnBytesRemaining = _colStart + _colSize - _fragmentStart;
-    _fragmentSize = min(_msgReader.bytesAvailable, columnBytesRemaining);
+    _fragmentSize = min(_in.bytesAvailable, columnBytesRemaining);
     _event = COLUMN_DATA_FRAGMENT;
     
     if (lastFragment)
@@ -194,12 +192,12 @@ class _ResultReader implements ResultReader {
       _state = _STATE_COL_FRAGMENT;
     
     print('############################');
-    print('index: ${_msgReader.index}');
-    print('messageStart: ${_msgReader.messageStart}');
-    print('messageEnd: ${_msgReader.messageEnd}');
-    print('messageBytesRemaining: ${_msgReader.messageBytesRemaining}');
-    print('bytesAvailable: ${_msgReader.bytesAvailable}');
-    print('contiguousBytesAvailable: ${_msgReader.contiguousBytesAvailable}');
+    print('index: ${_in.index}');
+    print('messageStart: ${_in.messageStart}');
+    print('messageEnd: ${_in.messageEnd}');
+    print('messageBytesRemaining: ${_in.messageBytesRemaining}');
+    print('bytesAvailable: ${_in.bytesAvailable}');
+    print('contiguousBytesAvailable: ${_in.contiguousBytesAvailable}');
     
     print('fragmentSizeInBytes: $fragmentSizeInBytes');
     print('lastFragment: $lastFragment');
@@ -210,16 +208,14 @@ class _ResultReader implements ResultReader {
   
   //TODO consider writing a parser to handle long row description messages.
   // As these may be longer than 30k.
-  bool _parseRowDescription() {
+  bool _parseRowDescription() {    
     
-    var r = _msgReader;    
+    assert(_in.messageType == _MSG_ROW_DESCRIPTION);
     
-    assert(r.messageType == _MSG_ROW_DESCRIPTION);
-    
-    if (r.isMessageFragment)
+    if (_in.isMessageFragment)
       return false; //FIXME Read more data. need to tell the connection that there is a message fragment.
     
-    int cols = r.readInt16();
+    int cols = _in.readInt16();
     
     //TODO report error, rather than assert.
     assert(cols >= 0);
@@ -227,13 +223,13 @@ class _ResultReader implements ResultReader {
     var list = new List<ColumnDesc>(cols);
     
     for (int i = 0; i < cols; i++) {      
-      var name = r.readString();
-      int fieldId = r.readInt32();
-      int tableColNo = r.readInt16();
-      int fieldType = r.readInt32();
-      int dataSize = r.readInt16();
-      int typeModifier = r.readInt32();
-      int formatCode = r.readInt16();
+      var name = _in.readString();
+      int fieldId = _in.readInt32();
+      int tableColNo = _in.readInt16();
+      int fieldType = _in.readInt32();
+      int dataSize = _in.readInt16();
+      int typeModifier = _in.readInt32();
+      int formatCode = _in.readInt16();
       
       list[i] = new _ColumnDesc(i, name, fieldId, tableColNo, fieldType, dataSize, typeModifier, formatCode);
     }
@@ -244,10 +240,10 @@ class _ResultReader implements ResultReader {
     //  _error(new _PgError.client('Message contents do not agree with length in message header. Message type: ${_itoa(r.messageType)}, bytes read: ${r.messageBytesRead}, message length: ${r.messageLength}.'));
     //  r.skipMessage();
     //}
-    if (r.messageBytesRemaining != 0)
+    if (_in.messageBytesRemaining != 0)
       throw new Exception('Lost sync.');
     
-    r.endMessage();
+    _in.endMessage();
     
     _columnDescs = list;
     
@@ -261,15 +257,14 @@ class _ResultReader implements ResultReader {
   }
   
   bool _parseCommandComplete() {
-    var r = _msgReader;
-    assert(r.messageType == _MSG_COMMAND_COMPLETE);
+    assert(_in.messageType == _MSG_COMMAND_COMPLETE);
     
     _event = END_COMMAND;
     
-    if (r.isMessageFragment)
+    if (_in.isMessageFragment)
       return false; //FIXME Read more data. need to tell the connection that there is a message fragment.
     
-    _commandTag = r.readString();
+    _commandTag = _in.readString();
     
     //TODO check message length and bytes read match.
     //TODO figure out how to do error handling at this level.
@@ -277,10 +272,10 @@ class _ResultReader implements ResultReader {
     //  _error(new _PgError.client('Message contents do not agree with length in message header. Message type: ${_itoa(r.messageType)}, bytes read: ${r.messageBytesRead}, message length: ${r.messageLength}.'));
     //  r.skipMessage();
     //}
-    if (r.messageBytesRemaining != 0)
+    if (_in.messageBytesRemaining != 0)
       throw new Exception('Lost sync.');
     
-    r.endMessage();
+    _in.endMessage();
     
     return true;
   }
@@ -299,7 +294,7 @@ class _ResultReader implements ResultReader {
       throw new Exception('ResultReader.readBytes() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
-    var colData = _msgReader.readBytes(_colSize);
+    var colData = _in.readBytes(_colSize);
     return _decodeBytes(columnDesc, colData, 0, colData.length);
   }
   
@@ -312,7 +307,7 @@ class _ResultReader implements ResultReader {
       throw new Exception('ResultReader.readString() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
-    var colData = _msgReader.readBytes(_colSize);
+    var colData = _in.readBytes(_colSize);
     return _decodeString(columnDesc, colData, 0, colData.length);
   }
   
@@ -321,7 +316,7 @@ class _ResultReader implements ResultReader {
       throw new Exception('ResultReader.readInt() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
-    var colData = _msgReader.readBytes(_colSize);
+    var colData = _in.readBytes(_colSize);
     return _decodeInt(columnDesc, colData, 0, colData.length);    
   }
   
@@ -330,7 +325,7 @@ class _ResultReader implements ResultReader {
       throw new Exception('ResultReader.readBool() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
-    var colData = _msgReader.readBytes(_colSize);
+    var colData = _in.readBytes(_colSize);
     return _decodeBool(columnDesc, colData, 0, colData.length);    
   }
 
@@ -339,7 +334,7 @@ class _ResultReader implements ResultReader {
       throw new Exception('ResultReader.readDecimal() called in invalid state, event: $event.');
     
     //TODO don't copy data here, just pass a reference to the buffer.
-    var colData = _msgReader.readBytes(_colSize);
+    var colData = _in.readBytes(_colSize);
     return _decodeDecimal(columnDesc, colData, 0, colData.length);    
   }
   
@@ -351,8 +346,8 @@ class _ResultReader implements ResultReader {
     //TODO Perhaps standard lib should have a StringBuffer.addFromCharCodes(List<int> chars);
     // Note that bytes may be split accross two blocks, so may need to call
     // buffer.add() twice.
-    if (_msgReader.bytesAvailable > 0) {
-      var bytes = _msgReader.readBytes(min(_fragmentSize, _msgReader.bytesAvailable));
+    if (_in.bytesAvailable > 0) {
+      var bytes = _in.readBytes(min(_fragmentSize, _in.bytesAvailable));
       print ('Got ${bytes.length} bytes from fragment');
       buffer.add(new String.fromCharCodes(bytes));
     }
@@ -360,8 +355,8 @@ class _ResultReader implements ResultReader {
   
   bool readBytesFragment(Uint8List buffer, int start) {
     //TODO make a zero copy impl, rather than using readBytes().
-    if (_msgReader.bytesAvailable > 0) {
-      var bytes = _msgReader.readBytes(min(_fragmentSize, _msgReader.bytesAvailable));
+    if (_in.bytesAvailable > 0) {
+      var bytes = _in.readBytes(min(_fragmentSize, _in.bytesAvailable));
       print ('Got ${bytes.length} bytes from fragment');
       for (int i = 0; i < bytes.length; i++) {
         buffer[start + i] = bytes[i];
