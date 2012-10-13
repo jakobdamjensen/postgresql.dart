@@ -5,8 +5,12 @@ const int _MESSAGE_WITHIN_BODY = 2;
 
 class _MessageReader {
   
-  _MessageReader(this._buffer) : _state = _MESSAGE_HEADER;
+  _MessageReader(int readSize, int initialBlocks)
+    : _state = _MESSAGE_HEADER,
+      _readSize = readSize,
+      _buffer = new _CircularBlockBuffer(readSize, initialBlocks);
   
+  final int _readSize;
   final _CircularBlockBuffer _buffer;
   
   int _state;
@@ -38,6 +42,10 @@ class _MessageReader {
   
   void _logState() {
     _log('index: $index, bytesAvailable: $bytesAvailable, messageType: $messageType, messageLength: $messageLength.');
+  }
+
+  int appendFromSocket(Socket socket) {
+    return _buffer.appendFromSocket(socket, _readSize);
   }
   
   int peekByteFast() {

@@ -18,9 +18,7 @@ class _Connection implements Connection {
   
   final Queue<_Query> _sendQueryQueue = new Queue<_Query>();
   _Query _query; // The query currently being sent, or having it's results processed.  
-  Socket _socket;  
-  _CircularBlockBuffer _input;
-  Uint8List _output;
+  Socket _socket;
   _MessageReader _reader;
   _MessageWriter _writer;
   final Completer<Connection> _connectCompleter = new Completer<Connection>();
@@ -28,10 +26,8 @@ class _Connection implements Connection {
   
   _Connection(this.settings) {          
     //TODO make buffer/read sizes configurable.
-    _output = new Uint8List(_OUTPUT_BUFFER_SIZE);
-    _input = new _CircularBlockBuffer(_SOCKET_READ_SIZE, 2);
-    _reader = new _MessageReader(_input);
-    _writer = new _MessageWriter(_output);
+    _reader = new _MessageReader(_SOCKET_READ_SIZE, 2);
+    _writer = new _MessageWriter(_SOCKET_WRITE_SIZE, 1);
   }
   
   void _changeState(_ConnectionState state) {
@@ -190,13 +186,9 @@ class _Connection implements Connection {
     
     _changeState(_BUSY);
 
-    _sendMessage();
-
-    //FIXME, This needs to be occasionally delayed, as the socket write
-    // sometimes needs to be completed asynchronously.
-    // Perhaps send message should return a bool, and take a callback.
-    // Or just return a future.
-    _query.changeState(_SENT);
+    // The state change needs to be occasionally delayed, as the socket write
+    // needs to be completed asynchronously if the buffers are full.
+    _sendMessage(() => _query.changeState(_SENT));
   }  
   
   void _handleAuthenticationRequest(_MessageReader r) {
@@ -303,25 +295,19 @@ class _Connection implements Connection {
     _error(err);
   }
     
-  // Sends a message stored in the output buffer.
-  // Note if the socket buffers are full, the message will not be sent
-  // immediately (i.e. asynchronously, instead of synchronously as per usual).
-  void _sendMessage() {
+  // Sends messages stored in the output buffer. Note if the socket buffers are
+  // full, the message will not be sent immediately. In this case the caller
+  // will need to wait for the callback to called to know the message has been
+  // sent. If the message send fails a fatal error will be triggered causing
+  // the connection to be closed.
+  void _sendMessage([void callback()]) {
     try {
-      
-      //This is non-blocking, returns a count of how many bytes were written to the buffer.
-      // If a full message is not written, set Socket.onWrite to queue the next write.
-      int bytesWritten = _socket.writeList(_output, 0, _writer.bytesWritten);
-      
-      if (bytesWritten == _writer.bytesWritten) {
-        _log('Sent $bytesWritten bytes.');
-      } else {
-        //FIXME
-        throw new Exception('writeList() failed - writeList queueing not yet implemented.');
-        // Set io state writing. ??
-        //_socket.onWrite = _continueSending;
-      }
-      
+      _writer.writeToSocket(_socket, (err) {
+        if (err == null && callback != null)
+          callback();
+        if (err != null)
+          _fatalError(err);
+      });
     } catch (ex) {
       _fatalError(new _PgError.client('Socket write error.'));
     }
@@ -347,7 +333,7 @@ class _Connection implements Connection {
         return;
       
       //TODO make readSize configurable.
-      int bytesRead = _input.appendFromSocket(_socket, _SOCKET_READ_SIZE);
+      int bytesRead = _reader.appendFromSocket(_socket);
     
       if (bytesRead == 0)
         return;

@@ -43,7 +43,7 @@ void testMessageParsing() {
   
   m.data = combineUint8Lists([
     makeRowDescriptionMessage(3),
-    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"]),
     makeCommandCompleteMessage('SELECT 1'),
     makeReadyForQueryMessage('I')
   ]);
@@ -61,8 +61,8 @@ void testMessageParsing2() {
   
   m.data = combineUint8Lists([
     makeRowDescriptionMessage(3),
-    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
-    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"]),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"]),
     makeCommandCompleteMessage('SELECT 2'),
     makeReadyForQueryMessage('I')
   ]);
@@ -82,8 +82,8 @@ void testMessageFragmentParsing() {
   
   m.data = combineUint8Lists([
     makeRowDescriptionMessage(3),
-    makeDataRowMessage(["sfsdfdsf", makeLongString(longStringLength), "fdsfdsfds"], 20 * 1024),
-    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeDataRowMessage(["sfsdfdsf", makeLongString(longStringLength), "fdsfdsfds"]),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"]),
     makeCommandCompleteMessage('SELECT 1'),
     makeReadyForQueryMessage('I')
   ]);
@@ -106,8 +106,8 @@ void testMessageFragmentParsing2() {
   
   m.data = combineUint8Lists([
     makeRowDescriptionMessage(3),
-    makeDataRowMessage(["sfsdfdsf", makeLongString(longStringLength), "fdsfdsfds"], 20 * 1024),
-    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"], 1024),
+    makeDataRowMessage(["sfsdfdsf", makeLongString(longStringLength), "fdsfdsfds"]),
+    makeDataRowMessage(["sfsdfdsf", "sdfsdfdsf", "fdsfdsfds"]),
     makeCommandCompleteMessage('SELECT 1'),
     makeReadyForQueryMessage('I')
   ]);
@@ -136,12 +136,11 @@ Uint8List makeRowDescriptionMessage(int count) {
   for (int i = 0; i < count; i++) {
     list.add(new _ColumnDesc(i, 'column$i', 0, 0, 705, -2, -1, 0));
   }
-  return makeRowDescriptionMessageImpl(list, 8192);
+  return makeRowDescriptionMessageImpl(list);
 }
 
-Uint8List makeRowDescriptionMessageImpl(List<ColumnDesc> cols, int maxSize) {
-  var buffer = new Uint8List(maxSize);
-  var w = new _MessageWriter(buffer);  
+Uint8List makeRowDescriptionMessageImpl(List<ColumnDesc> cols) {
+  var w = new _MessageWriter(8192, 1);
   
   w.startMessage(_MSG_ROW_DESCRIPTION);
   w.writeInt16(cols.length);
@@ -158,13 +157,12 @@ Uint8List makeRowDescriptionMessageImpl(List<ColumnDesc> cols, int maxSize) {
   
   w.endMessage();
   
-  return new Uint8List.view(buffer.asByteArray(0, w.bytesWritten));
+  return w.dump();
 }
 
 // All columns are type String.
-Uint8List makeDataRowMessage(List<String> values, int maxSize) {
-  var buffer = new Uint8List(maxSize);
-  var w = new _MessageWriter(buffer);
+Uint8List makeDataRowMessage(List<String> values) {
+  var w = new _MessageWriter(8192, 1);
   
   w.startMessage(_MSG_DATA_ROW);
   w.writeInt16(values.length);
@@ -181,30 +179,28 @@ Uint8List makeDataRowMessage(List<String> values, int maxSize) {
 
   w.endMessage();
   
-  return new Uint8List.view(buffer.asByteArray(0, w.bytesWritten));
+  return w.dump();
 }
 
 Uint8List makeCommandCompleteMessage(String commandTag) {
-  var buffer = new Uint8List(1024);
-  var w = new _MessageWriter(buffer);
+  var w = new _MessageWriter(8192, 1);
   
   w.startMessage(_MSG_COMMAND_COMPLETE);
   w.writeString(commandTag);
   w.endMessage();
   
-  return new Uint8List.view(buffer.asByteArray(0, w.bytesWritten));
+  return w.dump();
 }
 
 // transaction is 'I', 'T', or 'E'. If in doubt just I.
 Uint8List makeReadyForQueryMessage(String transaction) {
-  var buffer = new Uint8List(1024);
-  var w = new _MessageWriter(buffer);
+  var w = new _MessageWriter(8192, 1);
   
   w.startMessage(_MSG_READY_FOR_QUERY);
   w.writeByte(transaction.charCodeAt(0));
   w.endMessage();
   
-  return new Uint8List.view(buffer.asByteArray(0, w.bytesWritten));
+  return w.dump();
 }
 
 void testBuffer2() {
