@@ -24,7 +24,7 @@ class _ResultReader implements ResultReader {
   }
   
   int _state;
-  final _MessageReader _msgReader;
+  final _InputBuffer _msgReader;
   
   ResultReaderEventType _event;
   int _command = -1; // Command index.

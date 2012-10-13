@@ -1,5 +1,5 @@
 
-class _MessageWriter {
+class _OutputBuffer {
   
   final List<Uint8List> _buffers;
   int _writeSize;
@@ -10,7 +10,7 @@ class _MessageWriter {
   
   int get _spaceAvailable => _buffers.length * _writeSize - _pos;
   
-  _MessageWriter(this._writeSize, int initialBufferCount)
+  _OutputBuffer(this._writeSize, int initialBufferCount)
     : _buffers = new List<Uint8List>()
     {
       clear();

@@ -140,7 +140,7 @@ Uint8List makeRowDescriptionMessage(int count) {
 }
 
 Uint8List makeRowDescriptionMessageImpl(List<ColumnDesc> cols) {
-  var w = new _MessageWriter(8192, 1);
+  var w = new _OutputBuffer(8192, 1);
   
   w.startMessage(_MSG_ROW_DESCRIPTION);
   w.writeInt16(cols.length);
@@ -162,7 +162,7 @@ Uint8List makeRowDescriptionMessageImpl(List<ColumnDesc> cols) {
 
 // All columns are type String.
 Uint8List makeDataRowMessage(List<String> values) {
-  var w = new _MessageWriter(8192, 1);
+  var w = new _OutputBuffer(8192, 1);
   
   w.startMessage(_MSG_DATA_ROW);
   w.writeInt16(values.length);
@@ -183,7 +183,7 @@ Uint8List makeDataRowMessage(List<String> values) {
 }
 
 Uint8List makeCommandCompleteMessage(String commandTag) {
-  var w = new _MessageWriter(8192, 1);
+  var w = new _OutputBuffer(8192, 1);
   
   w.startMessage(_MSG_COMMAND_COMPLETE);
   w.writeString(commandTag);
@@ -194,7 +194,7 @@ Uint8List makeCommandCompleteMessage(String commandTag) {
 
 // transaction is 'I', 'T', or 'E'. If in doubt just I.
 Uint8List makeReadyForQueryMessage(String transaction) {
-  var w = new _MessageWriter(8192, 1);
+  var w = new _OutputBuffer(8192, 1);
   
   w.startMessage(_MSG_READY_FOR_QUERY);
   w.writeByte(transaction.charCodeAt(0));
@@ -206,7 +206,7 @@ Uint8List makeReadyForQueryMessage(String transaction) {
 void testBuffer2() {
   int size = 8912;
   
-  var buffer = new _MessageReader(size, 1);
+  var buffer = new _InputBuffer(size, 1);
   
   var socket = new _Mocket();
   socket.data = combineUint8Lists([
@@ -245,7 +245,7 @@ void testBuffer2() {
 void testBuffer3() {
   int size = 8912;
   
-  var buffer = new _MessageReader(size, 2);
+  var buffer = new _InputBuffer(size, 2);
   
   var socket = new _Mocket();
   socket.data = combineUint8Lists([
@@ -295,7 +295,7 @@ void testBuffer3() {
 void testBuffer4() {
   int size = 8912;
   
-  var buffer = new _MessageReader(size, 1);
+  var buffer = new _InputBuffer(size, 1);
   
   var socket = new _Mocket();
   socket.data = combineUint8Lists([
@@ -327,9 +327,7 @@ void testBuffer4() {
 
 void testBuffer5() {
   int size = 8912;
-  
-  //var buffer = new _Buffer(size);
-  var buffer = new _MessageReader(size, 2);
+  var buffer = new _InputBuffer(size, 2);
   
   var socket = new _Mocket();
   socket.data = combineUint8Lists([

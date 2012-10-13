@@ -17,7 +17,7 @@ class _RowDescriptionStateMachine {
   int _i;
   String _name;
   
-  final _MessageReader _reader;
+  final _InputBuffer _reader;
   final List<_ColumnDesc> _list = new List<_ColumnDesc>();
   
   // Keeps on returning null until it returns a list of _ColumnDesc.

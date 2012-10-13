@@ -3,9 +3,9 @@ const int _MESSAGE_HEADER = 0;
 const int _MESSAGE_BODY = 1;
 const int _MESSAGE_WITHIN_BODY = 2;
 
-class _MessageReader {
+class _InputBuffer {
   
-  _MessageReader(int readSize, int initialBlocks)
+  _InputBuffer(int readSize, int initialBlocks)
     : _state = _MESSAGE_HEADER,
       _readSize = readSize,
       _buffer = new _CircularBlockBuffer(readSize, initialBlocks);

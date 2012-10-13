@@ -19,15 +19,15 @@ class _Connection implements Connection {
   final Queue<_Query> _sendQueryQueue = new Queue<_Query>();
   _Query _query; // The query currently being sent, or having it's results processed.  
   Socket _socket;
-  _MessageReader _reader;
-  _MessageWriter _writer;
+  _InputBuffer _in;
+  _OutputBuffer _out;
   final Completer<Connection> _connectCompleter = new Completer<Connection>();
   final Settings settings;
   
   _Connection(this.settings) {          
     //TODO make buffer/read sizes configurable.
-    _reader = new _MessageReader(_SOCKET_READ_SIZE, 2);
-    _writer = new _MessageWriter(_SOCKET_WRITE_SIZE, 1);
+    _in = new _InputBuffer(_SOCKET_READ_SIZE, 2);
+    _out = new _OutputBuffer(_SOCKET_WRITE_SIZE, 1);
   }
   
   void _changeState(_ConnectionState state) {
@@ -82,8 +82,8 @@ class _Connection implements Connection {
     // Send terminate message.
     // Don't worry if there's not enough room in the send buffer to send the
     // message, as we will close the socket anyway.
-    _writer.startMessage(_MSG_TERMINATE);
-    _writer.endMessage();
+    _out.startMessage(_MSG_TERMINATE);
+    _out.endMessage();
     _sendMessage();
     
     _socket.close();
@@ -116,18 +116,18 @@ class _Connection implements Connection {
   void _sendStartupMessage() {
     assert(_state == _SOCKET_CONNECTED);
     
-    _writer.startMessage(_MSG_STARTUP);
-    _writer.writeInt32(_PROTOCOL_VERSION);
-    _writer.writeString('user');
-    _writer.writeString(settings.username);
-    _writer.writeString('database');
-    _writer.writeString(settings.database);
+    _out.startMessage(_MSG_STARTUP);
+    _out.writeInt32(_PROTOCOL_VERSION);
+    _out.writeString('user');
+    _out.writeString(settings.username);
+    _out.writeString('database');
+    _out.writeString(settings.database);
     
     //TODO write other params.
     
-    _writer.writeByte(0); // null byte to end param list.
+    _out.writeByte(0); // null byte to end param list.
     
-    _writer.endMessage();
+    _out.endMessage();
     _sendMessage();
     
     _changeState(_AUTHENTICATING);
@@ -148,7 +148,7 @@ class _Connection implements Connection {
     if (!_ok)
       throw new Exception('Attempted a query on a closed connection.');
     
-    var q = new _Query(sql, resultMapper, new _ResultReader(_reader));            
+    var q = new _Query(sql, resultMapper, new _ResultReader(_in));            
     _sendQueryQueue.addLast(q);
     q.changeState(_QUEUED);
     _processSendQueryQueue();
@@ -180,9 +180,9 @@ class _Connection implements Connection {
     //TODO streamed writes for long strings.
     // At the moment _writer will just bomb if it doesn't fit in the output
     // buffer. 
-    _writer.startMessage(_MSG_QUERY);
-    _writer.writeString(_query.sql);
-    _writer.endMessage();
+    _out.startMessage(_MSG_QUERY);
+    _out.writeString(_query.sql);
+    _out.endMessage();
     
     _changeState(_BUSY);
 
@@ -191,7 +191,7 @@ class _Connection implements Connection {
     _sendMessage(() => _query.changeState(_SENT));
   }  
   
-  void _handleAuthenticationRequest(_MessageReader r) {
+  void _handleAuthenticationRequest(_InputBuffer r) {
     
     if (_state != _AUTHENTICATING) {
       _fatalError(new _PgError.client('Received authentication request from server while in invalid state: $_state.'));
@@ -215,14 +215,14 @@ class _Connection implements Connection {
     var salt = new String.fromCharCodes(bytes);
     var md5 = 'md5'.concat(_md5s(settings.passwordHash.concat(salt)));
         
-    _writer.startMessage(_MSG_PASSWORD);
-    _writer.writeString(md5);
-    _writer.endMessage();
+    _out.startMessage(_MSG_PASSWORD);
+    _out.writeString(md5);
+    _out.endMessage();
     
     _sendMessage();
   }
   
-  void _handleReadyForQuery(_MessageReader r) {
+  void _handleReadyForQuery(_InputBuffer r) {
     
     //TODO Check these states. Perhaps should allow more. 
     if (_state != _READY && _state != _AUTHENTICATED) {
@@ -259,7 +259,7 @@ class _Connection implements Connection {
   }
   
   // TODO handle long error messages, that don't fit into the buffer.
-  void _handleErrorOrNoticeResponse(_MessageReader r, {bool isError}) {
+  void _handleErrorOrNoticeResponse(_InputBuffer r, {bool isError}) {
     
     // Parse error message.
     
@@ -302,7 +302,7 @@ class _Connection implements Connection {
   // the connection to be closed.
   void _sendMessage([void callback()]) {
     try {
-      _writer.writeToSocket(_socket, (err) {
+      _out.writeToSocket(_socket, (err) {
         if (err == null && callback != null)
           callback();
         if (err != null)
@@ -333,7 +333,7 @@ class _Connection implements Connection {
         return;
       
       //TODO make readSize configurable.
-      int bytesRead = _reader.appendFromSocket(_socket);
+      int bytesRead = _in.appendFromSocket(_socket);
     
       if (bytesRead == 0)
         return;
@@ -351,31 +351,31 @@ class _Connection implements Connection {
 //      i += len;
 //    }
       
-      if (_reader.state == _MESSAGE_WITHIN_BODY) {
+      if (_in.state == _MESSAGE_WITHIN_BODY) {
         // This can only happen for types which can be processed in fragments
         // without requiring the entire message being read into the buffer.
         //TODO At the moment this can only happen for DataRow messages.
         
         if ((_state != _BUSY && _state != _READY)
-            || _reader.messageType != _MSG_DATA_ROW) {
+            || _in.messageType != _MSG_DATA_ROW) {
           _fatalError(new _PgError.client('Lost sync #1.')); //TODO message
         }
         
         assert(_query != null);
         _query.readResult();
         
-        _reader._logState();
+        _in._logState();
         
         //TODO This is likely a bit broken.
         // Consider allowing the reader to return a value of what to do next.
         // i.e. NEXT_MSG, SOCKET_READ, or error, or fatal error.
-        if (_reader.bytesAvailable > 0 && 
-            (_reader.state == _MESSAGE_HEADER
-              || _reader.state == _MESSAGE_BODY)) {
+        if (_in.bytesAvailable > 0 && 
+            (_in.state == _MESSAGE_HEADER
+              || _in.state == _MESSAGE_BODY)) {
           // Fallthrough - i.e. continue NEXT_MSG;
-        } else if (_reader.state == _MESSAGE_WITHIN_BODY) {
+        } else if (_in.state == _MESSAGE_WITHIN_BODY) {
           continue SOCKET_READ;
-        } else if (_reader.bytesAvailable == 0) {
+        } else if (_in.bytesAvailable == 0) {
           continue SOCKET_READ;
         } else {
           assert(false);
@@ -388,25 +388,25 @@ class _Connection implements Connection {
         if (!_ok && _state != _AUTHENTICATING && _state != _AUTHENTICATED)
           return;
         
-        if (_reader.state == _MESSAGE_HEADER) {
-          if (_reader.bytesAvailable < 5)
+        if (_in.state == _MESSAGE_HEADER) {
+          if (_in.bytesAvailable < 5)
             continue SOCKET_READ;
       
-          _reader.startMessage();
+          _in.startMessage();
         }
         
-        assert(_reader.state == _MESSAGE_BODY);
+        assert(_in.state == _MESSAGE_BODY);
 
-        _log('Received message ${_messageName(_reader.messageType)} length: ${_reader.messageLength}');
+        _log('Received message ${_messageName(_in.messageType)} length: ${_in.messageLength}');
         
-        if (!_checkMessageLength(_reader.messageType, _reader.messageLength)) {
+        if (!_checkMessageLength(_in.messageType, _in.messageLength)) {
           _fatalError(new _PgError.client('Lost sync #2.'));
         }
 
         // In authenticating state only handle a subset of the message types.
         if (_state == _AUTHENTICATING
-            && _reader.messageType != _MSG_AUTH_REQUEST
-            && _reader.messageType != _MSG_ERROR_RESPONSE) {
+            && _in.messageType != _MSG_AUTH_REQUEST
+            && _in.messageType != _MSG_ERROR_RESPONSE) {
           
           _fatalError(new _PgError.client('Unexpected message type. Are you sure you connect to a postgresql database? MsgType: \'${_itoa(mtype)}\'.'));
           return;
@@ -414,11 +414,11 @@ class _Connection implements Connection {
           
         // In authenticated state only handle a subset of the message types.
         if (_state == _AUTHENTICATED
-            && _reader.messageType != _MSG_BACKEND_KEY_DATA 
-            && _reader.messageType != _MSG_PARAMETER_STATUS
-            && _reader.messageType != _MSG_READY_FOR_QUERY
-            && _reader.messageType != _MSG_ERROR_RESPONSE
-            && _reader.messageType != _MSG_NOTICE_RESPONSE) {
+            && _in.messageType != _MSG_BACKEND_KEY_DATA 
+            && _in.messageType != _MSG_PARAMETER_STATUS
+            && _in.messageType != _MSG_READY_FOR_QUERY
+            && _in.messageType != _MSG_ERROR_RESPONSE
+            && _in.messageType != _MSG_NOTICE_RESPONSE) {
             
           _fatalError(new _PgError.client('Unexpected message type while in authenticated state: ${_itoa(mtype)}.'));
           return;
@@ -440,9 +440,9 @@ class _Connection implements Connection {
         
         // These mesage types are handled by the ResultReader class.
         //TODO handle empty query response.
-        if (_reader.messageType == _MSG_ROW_DESCRIPTION
-            || _reader.messageType == _MSG_DATA_ROW
-            || _reader.messageType == _MSG_COMMAND_COMPLETE) {
+        if (_in.messageType == _MSG_ROW_DESCRIPTION
+            || _in.messageType == _MSG_DATA_ROW
+            || _in.messageType == _MSG_COMMAND_COMPLETE) {
           
           if (_state == _BUSY)
             _changeState(_READY);
@@ -457,13 +457,13 @@ class _Connection implements Connection {
           //TODO This is likely a bit broken.
           // Consider allowing the reader to return a value of what to do next.
           // i.e. NEXT_MSG, SOCKET_READ, or error, or fatal error.
-          if (_reader.bytesAvailable > 0 && 
-              (_reader.state == _MESSAGE_HEADER
-                || _reader.state == _MESSAGE_BODY)) {
+          if (_in.bytesAvailable > 0 && 
+              (_in.state == _MESSAGE_HEADER
+                || _in.state == _MESSAGE_BODY)) {
             continue NEXT_MSG;
-          } else if (_reader.state == _MESSAGE_WITHIN_BODY) {
+          } else if (_in.state == _MESSAGE_WITHIN_BODY) {
             continue SOCKET_READ;
-          } else if (_reader.bytesAvailable == 0) {
+          } else if (_in.bytesAvailable == 0) {
             continue SOCKET_READ;
           } else {
               assert(false);
@@ -473,26 +473,26 @@ class _Connection implements Connection {
         // Standard sized messages are handled after here. These messages are 
         // always less than 30k, so we can buffer them safely.
         // The entire message must be read into the buffer before continuing.
-        if (_reader.isMessageFragment)
+        if (_in.isMessageFragment)
           continue SOCKET_READ;
       
-        _handleMessage(_reader);
+        _handleMessage(_in);
       
-        if (_reader.messageBytesRemaining > 0) {
+        if (_in.messageBytesRemaining > 0) {
           _error(new _PgError.client('Bad message length.')); //TODO this should just be a warning.
       
           // Get ready to handle the next message in the buffer.
           // Trust the message length information from the header.
-          _reader.skipMessage();
+          _in.skipMessage();
         }
       
-        _reader.endMessage();
+        _in.endMessage();
         
       } // end message loop.      
     } // end socket read loop.
   }
   
-  bool _handleMessage(_MessageReader r) {
+  bool _handleMessage(_InputBuffer r) {
     
     var t = r.messageType;
     
