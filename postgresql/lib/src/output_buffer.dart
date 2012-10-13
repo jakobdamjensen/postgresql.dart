@@ -48,7 +48,7 @@ class _OutputBuffer {
         }
       }
     } catch (ex) {
-      callback(new PgError.client('Socket write error: $ex'));
+      callback(new _PgError.client('Socket write error: $ex'));
     }
     if (callback != null)
       callback(null);

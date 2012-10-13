@@ -14,8 +14,8 @@
 #source('../lib/src/connection.dart');
 #source('../lib/src/constants.dart');
 #source('../lib/src/encoding.dart');
-#source('../lib/src/message_reader.dart');
-#source('../lib/src/message_writer.dart');
+#source('../lib/src/input_buffer.dart');
+#source('../lib/src/output_buffer.dart');
 #source('../lib/src/pg_error.dart');
 #source('../lib/src/query.dart');
 #source('../lib/src/row_description.dart');

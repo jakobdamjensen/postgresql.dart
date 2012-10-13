@@ -408,7 +408,7 @@ class _Connection implements Connection {
             && _in.messageType != _MSG_AUTH_REQUEST
             && _in.messageType != _MSG_ERROR_RESPONSE) {
           
-          _fatalError(new _PgError.client('Unexpected message type. Are you sure you connect to a postgresql database? MsgType: \'${_itoa(mtype)}\'.'));
+          _fatalError(new _PgError.client('Unexpected message type. Are you sure you connect to a postgresql database? MsgType: \'${_itoa(_in.messageType)}\'.'));
           return;
         }
           
@@ -420,7 +420,7 @@ class _Connection implements Connection {
             && _in.messageType != _MSG_ERROR_RESPONSE
             && _in.messageType != _MSG_NOTICE_RESPONSE) {
             
-          _fatalError(new _PgError.client('Unexpected message type while in authenticated state: ${_itoa(mtype)}.'));
+          _fatalError(new _PgError.client('Unexpected message type while in authenticated state: ${_itoa(_in.messageType)}.'));
           return;
         }
 
@@ -501,8 +501,6 @@ class _Connection implements Connection {
     switch (t) {
       case _MSG_AUTH_REQUEST: _handleAuthenticationRequest(r); break;
       case _MSG_READY_FOR_QUERY: _handleReadyForQuery(r); break;
-      case _MSG_ROW_DESCRIPTION: _handleRowDescription(r); break;
-      
       case _MSG_ERROR_RESPONSE: _handleErrorOrNoticeResponse(r, isError: true); break;
       case _MSG_NOTICE_RESPONSE: _handleErrorOrNoticeResponse(r, isError: false); break;
       
@@ -534,6 +532,7 @@ class _Connection implements Connection {
         break;
   
       // These are handled by the ResultReader class.
+      case _MSG_ROW_DESCRIPTION:
       case _MSG_DATA_ROW:
       case _MSG_COMMAND_COMPLETE:
         _error(new _PgError.client('Unexpected message type: ${_itoa(t)} ${_messageName(t)}.'));

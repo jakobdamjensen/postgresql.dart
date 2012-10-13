@@ -1,16 +1,16 @@
 
 
 
-typedef void ValueReceiver(T value);
+typedef void _ValueReceiver(value);
 
 //TODO current caller can only can one of these methods. Perhaps throw
 // an exception if the user, for example, attempts to call one() after all(). 
 class _Stream<T> implements Stream<T> {
   
   Future _future; // Initialised by Streamer constructor.
-  ValueReceiver _receiver;
+  _ValueReceiver _receiver;
   
-  void onReceive(ValueReceiver receiver) {
+  void onReceive(void receiver(T value)) {
     _receiver = receiver;
   }
   
