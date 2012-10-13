@@ -60,7 +60,7 @@ const SERVER_ERROR = const PgErrorType('SERVER_ERROR');
 const SERVER_NOTICE = const PgErrorType('SERVER_NOTICE');
 
 abstract class PgError {
-  PgErrorType get type; //FATAL_CLIENT_ERROR, FATAL_SERVER_ERROR, SERVER_ERROR, SERVER_NOTICE
+  PgErrorType get type; //FATAL_CLIENT_ERROR, FATAL_SERVER_ERROR, SERVER_ERROR, SERVER_NOTICE //TODO CLIENT_NOTICE
   String get severity; //FIXME Client errors, report 'ERROR' or 'FATAL??'. Note that notice severities, get translated to the local language.
   String get code; //SQLSTATE http://www.postgresql.org/docs/8.4/static/errcodes-appendix.html  (Client is supposed to issue these too.)
   String get message; // One line description.

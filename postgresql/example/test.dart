@@ -19,7 +19,7 @@
 #source('../lib/src/pg_error.dart');
 #source('../lib/src/query.dart');
 #source('../lib/src/row_description.dart');
-#source('../lib/src/result_mapper.dart');
+#source('../lib/src/mapper.dart');
 #source('../lib/src/result_reader.dart');
 #source('../lib/src/settings.dart');
 #source('../lib/src/simple_buffer.dart');

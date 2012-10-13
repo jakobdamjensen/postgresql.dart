@@ -18,7 +18,7 @@
 #source('src/pg_error.dart');
 #source('src/query.dart');
 #source('src/row_description.dart');
-#source('src/result_mapper.dart');
+#source('src/mapper.dart');
 #source('src/result_reader.dart');
 #source('src/settings.dart');
 #source('src/simple_buffer.dart');
