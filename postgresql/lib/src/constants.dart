@@ -1,3 +1,4 @@
+part of postgresql;
 
 const int _SOCKET_READ_SIZE = 8192;
 const int _SOCKET_WRITE_SIZE = 8192;
@@ -91,8 +92,8 @@ String _messageName(int msg) {
     case _MSG_NOTIFICATION_RESPONSE: return 'NotificationResponse';
     case _MSG_BIND: return 'Bind';
     case _MSG_BIND_COMPLETE: return 'BindComplete';
-    case _MSG_CLOSE_COMPLETE: return 'CloseComplete'; 
-    case _MSG_COMMAND_COMPLETE: return 'CommandComplete'; 
+    case _MSG_CLOSE_COMPLETE: return 'CloseComplete';
+    case _MSG_COMMAND_COMPLETE: return 'CommandComplete';
     case _MSG_COPY_DATA: return 'CopyData';
     case _MSG_COPY_DONE: return 'CopyDone';
     case _MSG_COPY_IN_RESPONSE: return 'CopyInResponse';
@@ -133,8 +134,9 @@ String _authTypeAsString(int authType) {
                                 'GSSAPI or SSPI authentication data',
                                 'SSPI'];
   var type = unknown;
-  if (authType > 0 && authType < names.length)
+  if (authType > 0 && authType < names.length) {
     type = names[authType];
+  }
   return type;
 }
 

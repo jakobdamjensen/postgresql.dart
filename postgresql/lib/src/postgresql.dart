@@ -1,18 +1,20 @@
 // Public interface.
 
+part of postgresql;
+
 Settings defaultSettings = null;
 
 typedef void ErrorHandler(PgError error);
 
 abstract class Settings {
-  
+
   factory Settings({String host: 'localhost',
                    int port: 5432,
                    String username,
                    String database,
                    String password,
                    ErrorHandler onUnhandledErrorOrNotice}) =>
-                       
+
                        new _Settings(
                            host,
                            port,
@@ -24,7 +26,7 @@ abstract class Settings {
   int get port;
   String get username;
   String get database;
-  //TODO Map<String,String> params; 
+  //TODO Map<String,String> params;
   String get passwordHash;
   ErrorHandler get onUnhandledErrorOrNotice;
 }
@@ -40,9 +42,9 @@ abstract class Connection {
   void close();
 }
 
-abstract class Query extends Stream<Dynamic> {
+abstract class Query extends Stream<dynamic> {
   //TODO QueryState get state;
-  //TODO void cancel();  
+  //TODO void cancel();
 }
 
 abstract class Mapper {
@@ -84,10 +86,10 @@ const COLUMN_DATA_FRAGMENT = const ResultReaderEventType('column-data-fragment')
 
 abstract class ResultReader {
 
-  bool hasNext();  
-  
+  bool hasNext();
+
   ResultReaderEventType get event;
-  
+
   int get command;
   int get row;
   int get column;
@@ -95,9 +97,9 @@ abstract class ResultReader {
   ColumnDesc get columnDesc;
   List<ColumnDesc> get columnDescs;
   int get columnCount; // Number of columns in the row.
-  
+
   // These can only be called when event == COLUMN_DATA
-  Dynamic readDynamic(); // Encode based on default mapping.
+  dynamic readDynamic(); // Encode based on default mapping.
   String readString(); //TODO use default string encoding.
   int readInt();
   bool readBool();
@@ -105,34 +107,34 @@ abstract class ResultReader {
   List<int> readBytes();
   void readBytesInto(Uint8List buffer, int start);
   //TODO Date readDate(); dates and time.
-  
+
   // This can only be called when event == END_COMMAND
   //TODO parse this and return meaning result.
   String get commandTag;
-  
+
   // These can only be called when event == COLUMN_DATA_FRAGMENT
   // Or COLUMN_DATA too??
   int get fragmentSizeInBytes;
-  
+
   // If the final fragment after a sequence of fragments have been received.
   bool get lastFragment;
-  
+
   // Returns true if there is still more data fragments to read.
   bool readStringFragment(StringBuffer buffer);
-  
+
   // Returns true if there are still more data fragments to read.
   bool readBytesFragment(Uint8List buffer, int start);
 }
 
-abstract class Stream<T> implements Future<Dynamic> {  
+abstract class Stream<T> implements Future<dynamic> {
   void onReceive(void receiver(T value));
   Future<T> one();
   Future<List<T>> all();
   //TODO
   //Future<T> first();
-  //Future<T> last();    
+  //Future<T> last();
   //Stream<T> take(int n);
-  //Stream<T> skip(int n);  
+  //Stream<T> skip(int n);
   //Stream<T> range(int start, int count);
   //Future<int> count();
   //Future<T> nth(int n);
@@ -158,9 +160,9 @@ abstract class ColumnDesc {
   int get index;
   String get name;
   bool get binary;
-  
+
   //TODO figure out what to name these.
-  // Perhaps just use libpq names as they will be documented in existing code 
+  // Perhaps just use libpq names as they will be documented in existing code
   // examples. It may not be neccesary to store all of this info.
   int get fieldId; // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
   int get tableColNo; // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.

@@ -1,31 +1,33 @@
+part of postgresql;
 
 
 
 typedef void _ValueReceiver(value);
 
 //TODO current caller can only can one of these methods. Perhaps throw
-// an exception if the user, for example, attempts to call one() after all(). 
+// an exception if the user, for example, attempts to call one() after all().
 class _Stream<T> implements Stream<T> {
-  
+
   Future _future; // Initialised by Streamer constructor.
   _ValueReceiver _receiver;
-  
+
   void onReceive(void receiver(T value)) {
     _receiver = receiver;
   }
-  
+
   Future<T> one() {
     bool hasResult = false;
     T value;
     onReceive((val) {
-      if (hasResult)
+      if (hasResult) {
         throw new Exception('Expected only one result.');
+      }
       hasResult = true;
       value = val;
     });
     return _future.transform((_) => value);
   }
-  
+
   Future<List<T>> all() {
     var list = new List<T>();
     onReceive((val) {
@@ -51,31 +53,33 @@ class _Stream<T> implements Stream<T> {
 }
 
 class _Streamer<T> implements Streamer<T> {
-  
+
   _Streamer()
-    : _completer = new Completer<Dynamic>(),
+    : _completer = new Completer<dynamic>(),
       stream = new _Stream<T>() {
-    
+
     stream._future = _completer.future;
   }
-      
-  final Completer<Dynamic> _completer;
+
+  final Completer<dynamic> _completer;
   final _Stream<T> stream;
-  
+
   void send(T value) {
-    if (stream._receiver != null)
+    if (stream._receiver != null) {
       stream._receiver(value);
+    }
   }
-  
+
   void sendAll(Collection<T> values) {
-    for (var v in values)
+    for (var v in values) {
       send(v);
+    }
   }
-  
+
   // Delegate to Completer implementation.
   Future get future => _completer.future;
   void complete(T value) => _completer.complete(value);
-  void completeException(Object exception, [Object stackTrace]) => 
+  void completeException(Object exception, [Object stackTrace]) =>
       _completer.completeException(exception, stackTrace);
 }
 

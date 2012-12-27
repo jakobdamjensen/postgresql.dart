@@ -1,3 +1,4 @@
+part of postgresql;
 
 class _Settings implements Settings {
   _Settings(this.host,
@@ -9,7 +10,7 @@ class _Settings implements Settings {
       this.onUnhandledErrorOrNotice)
     : username = username,
       passwordHash = _md5s(password.concat(username));
-  
+
   final String host;
   final int port;
   final String username;
